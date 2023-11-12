@@ -1,4 +1,4 @@
-export const xxcode = `
+export const code = `
          ORG   $300
 FREQ     EQU   $350
 PLSWIDTH EQU   $352
@@ -44,7 +44,7 @@ READKB   LDA   $C000
          BEQ   PULSEDEC
          RTS
 `
-export const code = `
+export const zzzcode = `
 DMACBASE EQU   $C0C0
 DMALO    EQU   DMACBASE+0
 DMAHI    EQU   DMACBASE+1

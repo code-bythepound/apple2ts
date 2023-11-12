@@ -18,6 +18,7 @@ import { enableMouseCard } from "./devices/mouse"
 import { enableMockingboard, resetMockingboard } from "./devices/mockingboard"
 import { resetMouse, onMouseVBL } from "./devices/mouse"
 import { enableDiskDrive } from "./devices/diskdata"
+import { enableDMACCard, onDMACVBL } from "./devices/dmac"
 import { getDisassembly, getInstruction, verifyAddressWithinDisassembly } from "./utility/disassemble"
 
 // let timerID: any | number = 0
@@ -41,6 +42,7 @@ export let inVBL = false
 const startVBL = (): void => {
   inVBL = true
   onMouseVBL()
+  onDMACVBL()
 }
 
 const endVBL = (): void => {
@@ -140,7 +142,7 @@ const configureMachine = () => {
   didConfiguration = true
   enableSerialCard()
   enableMouseCard(true, 2)
-  enableMockingboard(true, 4)
+  enableDMACCard(true, 4)
   enableMockingboard(true, 5)
   enableDiskDrive()
 }

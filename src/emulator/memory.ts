@@ -496,6 +496,11 @@ export const getDataBlock = (addr: number) => {
   return memory.slice(offset, offset + 512)
 }
 
+export const getMemoryBlock = (addr: number, length: number) => {
+  const offset = addressGetTable[addr >>> 8] + (addr & 255)
+  return memory.slice(offset, offset + length)
+}
+
 export const setMemoryBlock = (addr: number, data: Uint8Array) => {
   const offset = addressSetTable[addr >>> 8] + (addr & 255)
   memory.set(data, offset)

@@ -1,4 +1,4 @@
-export const code = `
+export const xxcode = `
          ORG   $300
 FREQ     EQU   $350
 PLSWIDTH EQU   $352
@@ -44,7 +44,7 @@ READKB   LDA   $C000
          BEQ   PULSEDEC
          RTS
 `
-export const zzzcode = `
+export const code = `
 DMACBASE EQU   $C0C0
 DMALO    EQU   DMACBASE+0
 DMAHI    EQU   DMACBASE+1
@@ -55,6 +55,9 @@ FILLM16  EQU   1
 COPYM    EQU   2
 MEMRD    EQU   3
 MEMWR    EQU   4
+RECTT    EQU   5
+HLINET   EQU   6
+BLITLT   EQU   7
 
          ORG   $300
          lda <PUSHBUF
@@ -65,8 +68,36 @@ MEMWR    EQU   4
          sta DMALEN
          rts
 
-PBLEN    EQU 25
-PUSHBUF  db MEMRD
+PBLEN    EQU 28
+PUSHBUF  db FILLM8
+         db $ff
+         dw $400
+         db 0
+         dw $400
+         db RECTT
+         db 0
+         db 10
+         db 10
+         db 10
+         db 10
+         db HLINET
+         db 0
+         db 30
+         db 10
+         db 10
+         db BLITLT
+         dw $800
+         db 0
+         db 0
+         db 30
+         db 15
+         db 5
+         db 5
+         db 0
+         dw $ffff
+
+PBLEN2   EQU 43
+PUSHBUF2  db MEMRD
          db $50   ; display gfx
          db MEMRD
          db $53   ; split screen
@@ -83,6 +114,18 @@ PUSHBUF  db MEMRD
          dw $2000
          db $0
          dw $2400
+         db $0
+         dw $0028
+         db COPYM
+         dw $2000
+         db $0
+         dw $2800
+         db $0
+         dw $0028
+         db COPYM
+         dw $2000
+         db $0
+         dw $2C00
          db $0
          dw $0028
 PBEND    db $FF

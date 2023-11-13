@@ -140,10 +140,10 @@ let didConfiguration = false
 const configureMachine = () => {
   if (didConfiguration) return
   didConfiguration = true
-//  enableSerialCard()
-//  enableMouseCard(true, 2)
-//  enableDMACCard(true, 4)
-//  enableMockingboard(true, 5)
+  enableSerialCard()
+  enableMouseCard(true, 2)
+  enableDMACCard(true, 4)
+  enableMockingboard(true, 5)
   enableDiskDrive()
 }
 

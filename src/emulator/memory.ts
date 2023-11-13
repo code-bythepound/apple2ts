@@ -304,7 +304,7 @@ export const readWriteAuxMem = (addr: number, write = false) => {
   return useAux
 }
 
-const memGetSoftSwitch = (addr: number): number => {
+export const memGetSoftSwitch = (addr: number): number => {
   // $C019 Vertical blanking status (0 = vertical blanking, 1 = beam on)
   if (addr === 0xC019) {
     // Return "low" for 70 scan lines out of 262 (70 * 65 cycles = 4550)
@@ -363,7 +363,7 @@ export const memGetRaw = (addr: number): number => {
   return memory[shifted + (addr & 255)]
 }
 
-const memSetSoftSwitch = (addr: number, value: number) => {
+export const memSetSoftSwitch = (addr: number, value: number) => {
   // these are write-only soft switches that don't work like the others, since
   // we need the full byte of data being written
   if (addr === 0xC071 || addr === 0xC073) {

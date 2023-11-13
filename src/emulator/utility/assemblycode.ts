@@ -60,6 +60,11 @@ HLINET   EQU   6
 BLITLT   EQU   7
 
          ORG   $300
+         ldy #0
+loop     tya
+         sta $800,y
+         iny
+         bne loop
          lda <PUSHBUF
          sta DMALO
          lda >PUSHBUF
@@ -68,12 +73,17 @@ BLITLT   EQU   7
          sta DMALEN
          rts
 
-PBLEN    EQU 28
-PUSHBUF  db FILLM8
-         db $ff
-         dw $400
+PBLEN    EQU 31
+PUSHBUF  db MEMWR
+         db $00     ; turn off 80 store
+         db MEMWR
+         db $00     ; turn on 80 col
+         db RECTT
+         db 0x20
          db 0
-         dw $400
+         db 0
+         db 80
+         db 24
          db RECTT
          db 0
          db 10
@@ -88,7 +98,7 @@ PUSHBUF  db FILLM8
          db BLITLT
          dw $800
          db 0
-         db 0
+         db 1
          db 30
          db 15
          db 5

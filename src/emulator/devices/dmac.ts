@@ -3,6 +3,7 @@
 //import { interruptRequest } from "../cpu6502"
 import { memGetSoftSwitch, memSetSoftSwitch,
          memGet, memSet, getMemoryBlock, setSlotIOCallback } from "../memory"
+import { blit } from "./blitter"
 
 let slot = 1
 
@@ -19,24 +20,9 @@ let pushBufferAddr = 0
 
 const DMAPull = (addr: number, length: number) : Uint8Array => {
   // pushbuffers are always in the current bank
-  console.log("DMAC: DMAPull" + pushBufferAddr.toString(16) + " : " + length.toString(16) + " bytes")
+  console.log("DMAC: DMAPull " + pushBufferAddr.toString(16) + " : " + length.toString(16) + " bytes")
   return getMemoryBlock( addr, length )
 }
-
-/*
-const getgfxaddr = (line:number, page:number) : number =>
-{
-    if (page)
-      page = 0x4000
-    else
-      page = 0x2000
-
-    if (line>191)
-      return 0
-
-    return page + (0x0028*(line/64)) + (0x80*((line%64)/8)) + ((line%8)*0x400);
-}
-*/
 
 const gettxtaddr = (line:number, page:number) : number =>
 {
@@ -62,6 +48,9 @@ const CMD = {
     RECTT:   0x05,  // text filled rectangle
     HLINET:  0x06,  // text filled horizontal line
     BLITLT:  0x07,  // linear to text blit
+    BLITLH:  0x08,  // linear to HGR blit
+    EXIT:    0xFE,  // early exit
+    CHAIN:   0xFF,  // chain next dma
 }
 
 const readSS = (addr:number) => {
@@ -319,99 +308,109 @@ const rectT = (x: number, y: number, width: number, height: number, value: numbe
 }
 
 const ParseCmdBuffer = (buffer : Uint8Array) => {
-  let pos = 0
-  let value = 0
-  let addr = 0
-  let length = 0
-  let bank = 0
-  let sbank = 0
-  let smod = 0
-  let dbank = 0
-  let src = 0
-  let dest = 0
-  let x = 0
-  let y = 0
-  let width = 0
-  let height = 0
-  let op = 0
 
   while( pos < buffer.length )
   {
     let cmd = buffer[pos++]
     switch (cmd)
     {
-      case CMD.FILL8:
-        value = buffer[pos++]
-        addr = buffer[pos++]
+      case CMD.FILL8: {
+        let value = buffer[pos++]
+        let addr = buffer[pos++]
         addr += buffer[pos++] * 256
-        bank = buffer[pos++]
-        length = buffer[pos++]
+        let bank = buffer[pos++]
+        let length = buffer[pos++]
         length += buffer[pos++] * 256
         fillMem8(value, bank, addr, length)
-        break
+      }
+      break
 
-      case CMD.FILL16:
-        value = buffer[pos++]
+      case CMD.FILL16: {
+        let value = buffer[pos++]
         value += buffer[pos++] * 256
-        addr = buffer[pos++]
+        let addr = buffer[pos++]
         addr += buffer[pos++] * 256
-        bank = buffer[pos++]
-        length = buffer[pos++]
+        let bank = buffer[pos++]
+        let length = buffer[pos++]
         length += buffer[pos++] * 256
         fillMem16(value, bank, addr, length)
-        break
+      }
+      break
 
-      case CMD.COPY:
-        src = buffer[pos++]
+      case CMD.COPY: {
+        let src = buffer[pos++]
         src += buffer[pos++] * 256
-        sbank = buffer[pos++]
-        dest = buffer[pos++]
+        let sbank = buffer[pos++]
+        let dest = buffer[pos++]
         dest += buffer[pos++] * 256
-        dbank = buffer[pos++]
-        length = buffer[pos++]
+        let dbank = buffer[pos++]
+        let length = buffer[pos++]
         length += buffer[pos++] * 256
         copyMem(sbank, src, dbank, dest, length)
-        break
+      }
+      break
 
-      case CMD.SSRD:
-        addr = buffer[pos++]
+      case CMD.SSRD: {
+        let addr = buffer[pos++]
         readSS(addr)
-        break
+      }
+      break
 
-      case CMD.SSWR:
-        addr = buffer[pos++]
+      case CMD.SSWR: {
+        let addr = buffer[pos++]
         writeSS(addr)
-        break
+      }
+      break
 
-      case CMD.RECTT:
-        value = buffer[pos++]
-        x = buffer[pos++]
-        y = buffer[pos++]
-        width = buffer[pos++]
-        height = buffer[pos++]
+      case CMD.RECTT: {
+        let value = buffer[pos++]
+        let x = buffer[pos++]
+        let y = buffer[pos++]
+        let width = buffer[pos++]
+        let height = buffer[pos++]
         rectT(x, y, width, height, value)
-        break
+      }
+      break
 
-      case CMD.HLINET:
-        value = buffer[pos++]
-        x = buffer[pos++]
-        y = buffer[pos++]
-        width = buffer[pos++]
+      case CMD.HLINET: {
+        let value = buffer[pos++]
+        let x = buffer[pos++]
+        let y = buffer[pos++]
+        let width = buffer[pos++]
         hlineT(x, y, width, value)
-        break
+      }
+      break
 
-      case CMD.BLITLT:
-        src = buffer[pos++]
+      case CMD.BLITLT: {
+        let src = buffer[pos++]
         src += buffer[pos++] * 256
-        sbank = buffer[pos++]
-        smod = buffer[pos++]
-        x = buffer[pos++]
-        y = buffer[pos++]
-        width = buffer[pos++]
-        height = buffer[pos++]
-        op = buffer[pos++]
+        let sbank = buffer[pos++]
+        let smod = buffer[pos++]
+        let x = buffer[pos++]
+        let y = buffer[pos++]
+        let width = buffer[pos++]
+        let height = buffer[pos++]
+        let op = buffer[pos++]
         blitLToT(sbank, src, smod, x, y, width, height, op)
-        break
+      }
+      break
+
+      case CMD.BLITLH: {
+        let src = buffer[pos++]
+        src += buffer[pos++] * 256
+        let swid = buffer[pos++]
+        let srcx = buffer[pos++]
+        let x = buffer[pos++]
+        let y = buffer[pos++]
+        let width = buffer[pos++]
+        let height = buffer[pos++]
+        let op = buffer[pos++]
+        blit(src, swid, srcx, x, y, width, height)
+      }
+      break
+
+      case CMD.EXIT:
+        return
 
       default:
         console.log("DMAC: CMD " + cmd.toString(16) + " unknown")

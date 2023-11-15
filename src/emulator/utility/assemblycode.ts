@@ -58,6 +58,9 @@ MEMWR    EQU   4
 RECTT    EQU   5
 HLINET   EQU   6
 BLITLT   EQU   7
+BLITLH   EQU   8
+EXIT     EQU   0xFE
+CHAIN    EQU   0xFF
 
          ORG   $300
          ldy #0
@@ -65,12 +68,18 @@ loop     tya
          sta $800,y
          iny
          bne loop
-         lda <PUSHBUF
+rloop    lda <PUSHBUF2
          sta DMALO
-         lda >PUSHBUF
+         lda >PUSHBUF2
          sta DMAHI
-         lda #PBLEN
+         lda #PBLEN2
          sta DMALEN
+         inc XPOS
+kloop    lda $C000
+         bpl kloop
+         bit $C010
+         cmp #$D1  ; 'q'
+         bne rloop
          rts
 
 PBLEN    EQU 31
@@ -106,8 +115,8 @@ PUSHBUF  db MEMWR
          db 0
          dw $ffff
 
-PBLEN2   EQU 43
-PUSHBUF2  db MEMRD
+PBLEN2   EQU 26
+PUSHBUF2 db MEMRD
          db $50   ; display gfx
          db MEMRD
          db $53   ; split screen
@@ -119,24 +128,15 @@ PUSHBUF2  db MEMRD
          dw $ffff
          dw $2000
          db 0
-         dw 20
-         db COPYM
-         dw $2000
-         db $0
-         dw $2400
-         db $0
-         dw $0028
-         db COPYM
-         dw $2000
-         db $0
-         dw $2800
-         db $0
-         dw $0028
-         db COPYM
-         dw $2000
-         db $0
-         dw $2C00
-         db $0
-         dw $0028
+         dw $1000
+         db BLITLH
+         dw $800
+         db 28
+         db 0
+XPOS     db 0
+         db 0
+         db 28
+         db 5
+         db 0
 PBEND    db $FF
 `

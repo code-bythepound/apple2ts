@@ -3,7 +3,7 @@
 //import { interruptRequest } from "../cpu6502"
 import { memGetSoftSwitch, memSetSoftSwitch,
          memGet, memSet, getMemoryBlock, setSlotIOCallback } from "../memory"
-import { blit } from "./blitter"
+import { blit, blit2 } from "./blitter"
 
 let slot = 1
 

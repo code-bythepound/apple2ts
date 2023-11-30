@@ -18,7 +18,7 @@ import { enableMouseCard } from "./devices/mouse"
 import { enableMockingboard, resetMockingboard } from "./devices/mockingboard"
 import { resetMouse, onMouseVBL } from "./devices/mouse"
 import { enableDiskDrive } from "./devices/diskdata"
-import { enableDMACCard, onDMACVBL } from "./devices/dmac"
+import { enableDMACCard, onDMACVBL } from "./devices/dmac/dmac"
 import { getDisassembly, getInstruction, verifyAddressWithinDisassembly } from "./utility/disassemble"
 
 // let timerID: any | number = 0

@@ -33,20 +33,21 @@ class Apple2Canvas extends React.Component<DisplayProps> {
   startupTextTimeout = 0
 
   pasteHandler = (e: ClipboardEvent) => {
-    if (e.clipboardData) {
-      let data = e.clipboardData.getData("text");
+    const canvas = document.getElementById('apple2canvas')
+    if (document.activeElement === canvas && e.clipboardData) {
+      let data = e.clipboardData.getData("text")
       if (data !== "") {
         data = data.replaceAll(/[”“]/g,'"')  // fancy quotes with regular
         data = data.replaceAll('\n','\r')  // LFs to CRs
         passPasteText(data)
       }
-      e.preventDefault();
+      e.preventDefault()
     }
   };
 
   getSizes = () => {
     width = window.innerWidth - 20;
-    height = window.innerHeight - 250;
+    height = window.innerHeight - 275;
     // shrink either width or height to preserve aspect ratio
     if (width / screenRatio > height) {
       width = height * screenRatio
@@ -67,7 +68,7 @@ class Apple2Canvas extends React.Component<DisplayProps> {
     o: () => this.props.handleFileOpen(),
     p: () => passSetRunMode(this.props.runMode === RUN_MODE.PAUSED ? RUN_MODE.RUNNING : RUN_MODE.PAUSED),
     r: () => passSetRunMode(RUN_MODE.NEED_RESET),
-    s: () => this.props.handleFileSave()
+    s: () => this.props.handleFileSave(false)
   }
 
   handleMetaKey = (key: string) => {
@@ -252,6 +253,14 @@ class Apple2Canvas extends React.Component<DisplayProps> {
     this.renderCanvas()
   }
 
+  setFocus = () => {
+    if (this.myText.current) {
+      this.myText.current.focus()
+    } else if (this.props.myCanvas.current) {
+      this.props.myCanvas.current.focus()
+    }
+  }
+
   render() {
     [width, height] = this.getSizes()
 
@@ -265,18 +274,15 @@ class Apple2Canvas extends React.Component<DisplayProps> {
 
     return <span className="canvasText">
       <canvas ref={this.props.myCanvas}
+        id="apple2canvas"
         className="mainCanvas"
         style={{cursor: showMouse ? "auto" : "none"}}
         width={width} height={height}
         tabIndex={0}
         onKeyDown={isTouchDevice ? ()=>{null} : this.handleKeyDown}
         onKeyUp={isTouchDevice ? ()=>{null} : this.handleKeyUp}
-        onMouseEnter={() => {
-          this.myText.current?.focus()
-        }}
-        onMouseDown={() => {
-          this.myText.current?.focus()
-        }}
+        onMouseEnter={this.setFocus}
+        onMouseDown={this.setFocus}
       />
       {/* Use hidden canvas/context so image rescaling works in iOS < 15.
           See graphics.ts drawImage() */}

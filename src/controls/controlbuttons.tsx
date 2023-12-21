@@ -8,8 +8,6 @@ import {
   faSave,
 } from "@fortawesome/free-solid-svg-icons";
 import { handleSetCPUState } from "../controller";
-// import VideogameAssetIcon from '@mui/icons-material/VideogameAsset';
-// import VideogameAssetOffIcon from '@mui/icons-material/VideogameAssetOff';
 
 const ControlButtons = (props: DisplayProps) => {  
   return <span className="flex-row">
@@ -30,7 +28,7 @@ const ControlButtons = (props: DisplayProps) => {
       <FontAwesomeIcon icon={faFolderOpen} style={{ fontSize: '0.9em' }}/>
     </button>
     <button className="pushButton" title="Save State"
-      onClick={() => props.handleFileSave()}
+      onClick={() => props.handleFileSave(false)}
       disabled={props.runMode === RUN_MODE.IDLE || props.runMode === RUN_MODE.NEED_BOOT}
     >
       <FontAwesomeIcon icon={faSave}/>

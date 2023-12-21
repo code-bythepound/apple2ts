@@ -6,21 +6,25 @@ import {
   faXmark as iconBreakpointDelete,
   faPlus as iconBreakpointAdd,
 } from "@fortawesome/free-solid-svg-icons";
+import {
+  faCircleHalfStroke as iconBreakpointExtra,
+  faCircle as iconBreakpointEnabled,
+} from "@fortawesome/free-solid-svg-icons";
+import {faCircle as iconBreakpointDisabled} from "@fortawesome/free-regular-svg-icons";
 import { getLineOfDisassembly } from "./debugpanelutilities";
 import BreakpointEdit from "./breakpointedit";
-import { Breakpoint, Breakpoints, getBreakpointIcon, getBreakpointString, getBreakpointStyle } from "./breakpoint";
+import { Breakpoint, Breakpoints, getBreakpointString, getBreakpointStyle } from "./breakpoint";
 
 class BreakpointsView extends React.Component<
   {breakpoints: Breakpoints;
   setBreakpoints: (breakpoints: Breakpoints) => void},
   {showBreakpointEdit: boolean}>
 {
-  lineHeight = 0 // 13.3333 // 10 * (96 / 72) pixels
   nlines = 12  // should this be an argument?
   breakpointEditAddress = 0
   breakpointEditValue = new Breakpoint()
-  dialogPositionX = 1050
-  dialogPositionY = 650
+  dialogPositionX = window.innerWidth / 2 - 200
+  dialogPositionY = window.innerHeight / 2 - 200
 
   constructor(props: { breakpoints: Breakpoints;
     setBreakpoints: (breakpoints: Breakpoints) => void}) {
@@ -97,6 +101,16 @@ class BreakpointsView extends React.Component<
     this.dialogPositionY = y
   }
 
+  getBreakpointIcon = (bp: Breakpoint) => {
+    if (bp.disabled) {
+      return iconBreakpointDisabled
+    }
+    if (bp.expression || bp.hitcount > 1) {
+      return iconBreakpointExtra
+    }
+    return iconBreakpointEnabled
+  }
+
   render() {
     return (
       <div className="flex-column">
@@ -121,7 +135,7 @@ class BreakpointsView extends React.Component<
             </button>
           </div>
         </div>
-        <div className="debugPanel thinBorder"
+        <div className="debug-panel small-mono-text thinBorder"
           style={{
             width: '213px',
             height: `${this.nlines * 10 - 2}pt`,
@@ -136,7 +150,7 @@ class BreakpointsView extends React.Component<
                 onClick={(e) => {this.handleBreakpointClick(e)}}>
                 <FontAwesomeIcon className={getBreakpointStyle(breakpoint)}
                   style={{paddingRight: "0"}}
-                  icon={getBreakpointIcon(breakpoint)}/>
+                  icon={this.getBreakpointIcon(breakpoint)}/>
               </button>
               <button className="breakpoint-pushbutton"
                 data-key={key}

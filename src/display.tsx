@@ -4,7 +4,7 @@ import { setDisplay, handleGetRunMode, passSetRunMode,
   passSetDebug,
   passRestoreSaveState, handleGetSaveState, handleGetAltCharSet,
   handleGetFilename } from "./main2worker"
-import { RUN_MODE, getPrintableChar, COLOR_MODE } from "./emulator/utility/utility"
+import { RUN_MODE, getPrintableChar, COLOR_MODE, TEST_DEBUG } from "./emulator/utility/utility"
 import Apple2Canvas from "./canvas"
 import ControlPanel from "./controls/controlpanel"
 import DiskInterface from "./devices/diskinterface"
@@ -35,7 +35,7 @@ class DisplayApple2 extends React.Component<object,
   constructor(props: object) {
     super(props);
     this.state = {
-      doDebug: false,
+      doDebug: TEST_DEBUG,
       currentSpeed: 1.02,
       speedCheck: true,
       uppercase: true,
@@ -125,10 +125,10 @@ class DisplayApple2 extends React.Component<object,
   handleRestoreState = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target?.files?.length) {
       const fileread = new FileReader()
-      const saveStateReader = this.restoreSaveStateFunc
+      const restoreStateReader = this.restoreSaveStateFunc
       fileread.onload = function(e) {
         if (e.target) {
-          saveStateReader(e.target.result as string)
+          restoreStateReader(e.target.result as string)
         }
       };
       fileread.readAsText(e.target.files[0]);
@@ -175,8 +175,48 @@ class DisplayApple2 extends React.Component<object,
     document.body.removeChild(link);
   }
 
-  handleFileSave = () => {
-    handleGetSaveState(this.doSaveStateCallback)
+  handleFileSave = (withSnapshots: boolean) => {
+    handleGetSaveState(this.doSaveStateCallback, withSnapshots)
+  }
+
+  trimData = (data: Uint8ClampedArray, width: number, height: number) => {
+    let left = width
+    let right = 0
+    let top = height
+    let bottom = 0
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const alpha = data[(y * width + x) * 4 + 3]
+        if (alpha === 255) {
+          if (x < left) left = x
+          if (x > right) right = x
+          if (y < top) top = y
+          if (y > bottom) bottom = y
+        }
+      }
+    }
+    return {left, right, top, bottom}
+  }
+
+  trimCanvas = (handleBlob: (blob: Blob) => void) => {
+    const canvas = this.myCanvas.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    const imageData = ctx?.getImageData(0, 0, canvas.width, canvas.height)
+    const data = imageData?.data
+    if (!data) return
+    const {left, right, top, bottom} = this.trimData(data, canvas.width, canvas.height)
+    const trimmedCanvas = document.createElement('canvas')
+    trimmedCanvas.width = right - left
+    trimmedCanvas.height = bottom - top
+    const trimmedCtx = trimmedCanvas.getContext('2d')
+    trimmedCtx?.drawImage(canvas, left, top, right - left, bottom - top,
+      0, 0, right - left, bottom - top)
+    trimmedCanvas.toBlob((trimmedBlob) => {
+      if (trimmedBlob) {
+        handleBlob(trimmedBlob)
+      }
+    })
   }
 
   /**
@@ -205,14 +245,8 @@ class DisplayApple2 extends React.Component<object,
       navigator.clipboard.writeText(output);
     } else {
       try {
-        this.myCanvas.current?.toBlob((blob) => {
-          if (blob) {
-            navigator.clipboard.write([
-              new ClipboardItem({
-                'image/png': blob,
-              })
-            ])
-          }
+        this.trimCanvas((blob) => {
+          navigator.clipboard.write([new ClipboardItem({'image/png': blob,})])
         })
       }
       catch (error) {
@@ -240,9 +274,9 @@ class DisplayApple2 extends React.Component<object,
       handleFileOpen: this.handleFileOpen,
       handleFileSave: this.handleFileSave,
     }
-    const width = props.myCanvas.current?.width
+    const width = props.myCanvas.current?.width || 600
     const height = window.innerHeight - 30
-    let paperWidth = window.innerWidth - (width ? width : 600) - 70
+    let paperWidth = window.innerWidth - width - 70
     if (paperWidth < 300) paperWidth = 300
     return (
       <div>

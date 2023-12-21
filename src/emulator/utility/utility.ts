@@ -1,5 +1,7 @@
 import { KeyboardEvent } from "react"
 
+export const TEST_DEBUG = false
+
 export enum RUN_MODE {
   IDLE = 0,
   RUNNING = -1,
@@ -19,6 +21,7 @@ export enum MSG_WORKER {
   SHOW_MOUSE,
   MBOARD_SOUND,
   COMM_DATA,
+  MIDI_DATA,
 }
 
 export enum MSG_MAIN {
@@ -31,8 +34,9 @@ export enum MSG_MAIN {
   STEP_OVER,
   STEP_OUT,
   SPEED,
-  TIME_TRAVEL,
+  TIME_TRAVEL_STEP,
   TIME_TRAVEL_INDEX,
+  TIME_TRAVEL_SNAPSHOT,
   RESTORE_STATE,
   KEYPRESS,
   MOUSEEVENT,
@@ -40,10 +44,12 @@ export enum MSG_MAIN {
   APPLE_PRESS,
   APPLE_RELEASE,
   GET_SAVE_STATE,
+  GET_SAVE_STATE_SNAPSHOTS,
   DRIVE_PROPS,
   GAMEPAD,
   SET_BINARY_BLOCK,
   COMM_DATA,
+  MIDI_DATA,
 }
 
 export enum COLOR_MODE {

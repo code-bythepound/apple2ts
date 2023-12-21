@@ -6,6 +6,7 @@ import { doRumble } from "./devices/gamepad"
 import { setShowMouse } from "./canvas"
 import { playMockingboard } from "./devices/mockingboard_audio"
 import { receiveCommData } from "./devices/imagewriter"
+import { receiveMidiData } from "./devices/midiinterface"
 import DisplayApple2 from "./display"
 import { Breakpoints } from "./panels/breakpoint"
 
@@ -69,15 +70,19 @@ export const passSetNormalSpeed = (normal: boolean) => {
 }
 
 export const passGoForwardInTime = () => {
-  doPostMessage(MSG_MAIN.TIME_TRAVEL, "FORWARD")
+  doPostMessage(MSG_MAIN.TIME_TRAVEL_STEP, "FORWARD")
 }
 
 export const passGoBackInTime = () => {
-  doPostMessage(MSG_MAIN.TIME_TRAVEL, "BACKWARD")
+  doPostMessage(MSG_MAIN.TIME_TRAVEL_STEP, "BACKWARD")
 }
 
 export const passTimeTravelIndex = (index: number) => {
   doPostMessage(MSG_MAIN.TIME_TRAVEL_INDEX, index)
+}
+
+export const passTimeTravelSnapshot = () => {
+  doPostMessage(MSG_MAIN.TIME_TRAVEL_SNAPSHOT, true)
 }
 
 export const passRestoreSaveState = (saveState: EmulatorSaveState) => {
@@ -115,6 +120,10 @@ export const passSetBinaryBlock = (address: number, data: Uint8Array, run: boole
 
 export const passRxCommData = (data: Uint8Array) => {
   doPostMessage(MSG_MAIN.COMM_DATA, data)
+}
+
+export const passRxMidiData = (data: Uint8Array) => {
+  doPostMessage(MSG_MAIN.MIDI_DATA, data)
 }
 
 let machineState: MachineState = {
@@ -202,6 +211,11 @@ const doOnMessage = (e: MessageEvent) => {
       receiveCommData(commdata)
       break
     }
+    case MSG_WORKER.MIDI_DATA: {
+      const mididata = e.data.payload as Uint8Array
+      receiveMidiData(mididata)
+      break
+    }
     default:
       console.error("main2worker: unknown msg: " + JSON.stringify(e.data))
       break
@@ -282,9 +296,10 @@ export const handleGetTimeTravelThumbnails = () => {
   return machineState.timeTravelThumbnails
 }
 
-export const handleGetSaveState = (callback: (saveState: EmulatorSaveState) => void) => {
+export const handleGetSaveState = (callback: (saveState: EmulatorSaveState) => void,
+  withSnapshots: boolean) => {
   saveStateCallback = callback
-  doPostMessage(MSG_MAIN.GET_SAVE_STATE, true)
+  doPostMessage(withSnapshots ? MSG_MAIN.GET_SAVE_STATE_SNAPSHOTS : MSG_MAIN.GET_SAVE_STATE, true)
 }
 
 const initDriveProps = (drive: number): DriveProps => {

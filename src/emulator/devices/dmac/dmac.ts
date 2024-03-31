@@ -5,9 +5,12 @@ import { memGetSoftSwitch, memSetSoftSwitch,
          memGet, memSet, getMemoryBlock, setSlotIOCallback } from "../../memory"
 import { hblitLToT, blitLToT, hlineT, rectT } from "./txtmode"
 
-let slot = 1
+let slot = 3
 
-export const enableDMACCard = (enable = true, aslot = 1) => {
+export const resetDMAC = () => {
+}
+
+export const enableDMACCard = (enable = true, aslot = 3) => {
   if (!enable)
     return
 
@@ -237,7 +240,7 @@ export const onDMACVBL = () => {
 
 const handleDMACIO = (addr: number, val = -1): number => {
 
-  // We don't manage the ROM
+  // There is no ROM
   if (addr >= 0xC100)
     return -1
 

@@ -19,7 +19,7 @@ import { enablePassportCard, resetPassport } from "./devices/passport/passport"
 import { enableMockingboard, resetMockingboard } from "./devices/mockingboard"
 import { resetMouse, onMouseVBL } from "./devices/mouse"
 import { enableDiskDrive } from "./devices/diskdata"
-import { enableDMACCard, onDMACVBL } from "./devices/dmac/dmac"
+import { resetDMAC, enableDMACCard, onDMACVBL } from "./devices/dmac/dmac"
 import { getDisassembly, getInstruction, verifyAddressWithinDisassembly } from "./utility/disassemble"
 import { sendPastedText } from "./devices/keyboard"
 
@@ -173,8 +173,8 @@ const configureMachine = () => {
   if (didConfiguration) return
   didConfiguration = true
   enableSerialCard()
-  enableDMACCard(true, 3)
   enablePassportCard(true, 2)
+  enableDMACCard(true, 3)
   enableMockingboard(true, 4)
   enableMouseCard(true, 5)
   enableDiskDrive()
@@ -187,6 +187,7 @@ const resetMachine = () => {
   resetPassport()
   resetSerial()
   resetMockingboard(4)
+  resetDMAC()
 }
 
 const doBoot = () => {

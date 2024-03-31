@@ -1,18 +1,18 @@
 // Chris Torrence, 2022
 import { Buffer } from "buffer"
-import { passMachineState } from "./worker2main"
-import { s6502, setState6502, reset6502, setCycleCount, setPC, get6502StateString, getStackString } from "./instructions"
-import { RUN_MODE, TEST_DEBUG } from "./utility/utility"
+import { passMachineState, passRequestThumbnail } from "./worker2main"
+import { s6502, setState6502, reset6502, setCycleCount, setPC, getStackString } from "./instructions"
+import { COLOR_MODE, MAX_SNAPSHOTS, RUN_MODE, TEST_DEBUG } from "./utility/utility"
 import { getDriveSaveState, restoreDriveSaveState, resetDrive, doPauseDrive } from "./devices/drivestate"
 // import { slot_omni } from "./roms/slot_omni_cx00"
-import { SWITCHES } from "./softswitches";
+import { SWITCHES, overrideSoftSwitch, resetSoftSwitches, restoreSoftSwitches } from "./softswitches";
 import { memory, memGet, getTextPage, getHires, memoryReset,
-  updateAddressTables, setMemoryBlock, getZeroPage } from "./memory"
+  updateAddressTables, setMemoryBlock, getZeroPage, getBaseMemory, addressGetTable } from "./memory"
 import { setButtonState, handleGamepads } from "./devices/joystick"
 import { parseAssembly } from "./utility/assembler";
 import { code } from "./utility/assemblycode"
 import { handleGameSetup } from "./games/game_mappings"
-import { clearInterrupts, doSetBreakpointSkipOnce, processInstruction, setStepOut } from "./cpu6502"
+import { breakpointMap, clearInterrupts, doSetBreakpointSkipOnce, processInstruction, setStepOut } from "./cpu6502"
 import { enableSerialCard, resetSerial } from "./devices/superserial/serial"
 import { enableMouseCard } from "./devices/mouse"
 import { enablePassportCard, resetPassport } from "./devices/passport/passport"
@@ -21,12 +21,13 @@ import { resetMouse, onMouseVBL } from "./devices/mouse"
 import { enableDiskDrive } from "./devices/diskdata"
 import { enableDMACCard, onDMACVBL } from "./devices/dmac/dmac"
 import { getDisassembly, getInstruction, verifyAddressWithinDisassembly } from "./utility/disassemble"
+import { sendPastedText } from "./devices/keyboard"
 
 // let timerID: any | number = 0
 let startTime = 0
 let prevTime = 0
-let normalSpeed = true
-let speed = 0
+let speedMode = 0
+let cpuSpeed = 0
 export let isDebugging = TEST_DEBUG
 let disassemblyAddr = -1
 let refreshTime = 16.6881 // 17030 / 1020.488
@@ -35,7 +36,6 @@ let cpuRunMode = RUN_MODE.IDLE
 let iRefresh = 0
 let takeSnapshot = false
 let iTempState = 0
-const maxState = 60
 const saveStates: Array<EmulatorSaveState> = []
 export let inVBL = false
 
@@ -89,14 +89,25 @@ const setApple2State = (newState: Apple2SaveState) => {
   handleGameSetup(true)
 }
 
-// export const doRequestSaveState = () => {
-//   passSaveState(doGetSaveState())
-// }
+const getDisplaySaveState = () => {
+  const state: DisplaySaveState = {
+    name: '',
+    date: '',
+    colorMode: 0,
+    capsLock: false,
+    audioEnable: false,
+    mockingboardMode: 0,
+    speedMode: speedMode,
+    helptext: '',
+  }
+  return state
+}
 
-export const doGetSaveState = (full = false): EmulatorSaveState => {
-  const state = { emulator: null,
+export const doGetSaveState = (full: boolean): EmulatorSaveState => {
+  const state = { emulator: getDisplaySaveState(),
     state6502: getApple2State(),
     driveState: getDriveSaveState(full),
+    thumbnail: '',
     snapshots: null
   }
   return state
@@ -104,11 +115,8 @@ export const doGetSaveState = (full = false): EmulatorSaveState => {
 }
 
 export const doGetSaveStateWithSnapshots = (): EmulatorSaveState => {
-  const state = { emulator: null,
-    state6502: getApple2State(),
-    driveState: getDriveSaveState(true),
-    snapshots: saveStates
-  }
+  const state = doGetSaveState(true)
+  state.snapshots = saveStates
   return state
 //  return Buffer.from(compress(JSON.stringify(state)), 'ucs2').toString('base64')
 }
@@ -121,11 +129,18 @@ export const doSetState6502 = (newState: STATE6502) => {
   updateExternalMachineState()
 }
 
-export const doRestoreSaveState = (sState: EmulatorSaveState) => {
+export const doRestoreSaveState = (sState: EmulatorSaveState, eraseSnapshots = false) => {
   doReset()
   setApple2State(sState.state6502)
   restoreDriveSaveState(sState.driveState)
   disassemblyAddr = s6502.PC
+  if (sState.emulator?.speedMode !== undefined) {
+    speedMode = sState.emulator?.speedMode
+  }
+  if (eraseSnapshots) {
+    saveStates.length = 0
+    iTempState = 0
+  }
   if (sState.snapshots) {
     saveStates.length = 0
     saveStates.push(...sState.snapshots)
@@ -188,25 +203,22 @@ const doBoot = () => {
 
 const doReset = () => {
   clearInterrupts()
-  for (const key in SWITCHES) {
-    const keyTyped = key as keyof typeof SWITCHES
-    SWITCHES[keyTyped].isSet = false
-  }
-  SWITCHES.TEXT.isSet = true
+  resetSoftSwitches()
   // Reset banked RAM
   memGet(0xC082)
   reset6502()
   resetMachine()
 }
 
-export const doSetNormalSpeed = (normal: boolean) => {
-  normalSpeed = normal
-  refreshTime = normalSpeed ? 16.6881 : 0
+export const doSetSpeedMode = (speedModeIn: number) => {
+  speedMode = speedModeIn
+  refreshTime = (speedMode > 0) ? 0 : 16.6881
   resetRefreshCounter()
 }
 
 export const doSetIsDebugging = (enable: boolean) => {
   isDebugging = enable
+  updateExternalMachineState()
 }
 
 export const doSetDisassembleAddress = (addr: number) => {
@@ -232,12 +244,14 @@ const getGoForwardIndex = () => {
 }
 
 const doSnapshot = () => {
-  if (saveStates.length === maxState) {
+  if (saveStates.length === MAX_SNAPSHOTS) {
     saveStates.shift()
   }
-  saveStates.push(doGetSaveState())
+  saveStates.push(doGetSaveState(false))
   // This is at the current "time" and is just past our recently-saved state.
   iTempState = saveStates.length
+  passRequestThumbnail(saveStates[saveStates.length - 1].state6502.s6502.PC)
+  handleGameSetup(false)
 }
 
 export const doGoBackInTime = () => {
@@ -278,9 +292,15 @@ export const doGotoTimeTravelIndex = (index: number) => {
 const getTimeTravelThumbnails = () => {
   const result: Array<TimeTravelThumbnail> = []
   for (let i = 0; i < saveStates.length; i++) {
-    result[i] = {s6502: saveStates[i].state6502.s6502}
+    result[i] = {s6502: saveStates[i].state6502.s6502, thumbnail: saveStates[i].thumbnail}
   }
   return result
+}
+
+export const doSetThumbnailImage = (thumbnail: string) => {
+  if (saveStates.length > 0) {
+    saveStates[saveStates.length - 1].thumbnail = thumbnail
+  }
 }
 
 let timeout: NodeJS.Timeout | null = null
@@ -357,10 +377,23 @@ export const doSetRunMode = (cpuRunModeIn: RUN_MODE) => {
   }
   updateExternalMachineState()
   resetRefreshCounter()
-  if (speed === 0) {
-    speed = 1
-    doTakeSnapshot()
+  if (cpuSpeed === 0) {
+    cpuSpeed = 1
     doAdvance6502Timer()
+  }
+}
+
+const doAutoboot = (fn: () => void) => {
+  if (cpuRunMode === RUN_MODE.IDLE) {
+    doSetRunMode(RUN_MODE.NEED_BOOT)
+    // Wait a bit for the cpu to boot and then do reset.
+    setTimeout(() => {
+      doSetRunMode(RUN_MODE.NEED_RESET)
+      // After giving the reset some time, load the binary block.
+      setTimeout(() => { fn() }, 200)
+    }, 200)
+  } else {
+    fn()
   }
 }
 
@@ -371,30 +404,32 @@ export const doSetBinaryBlock = (addr: number, data: Uint8Array, run: boolean) =
       setPC(addr)
     }
   }
-  if (cpuRunMode === RUN_MODE.IDLE) {
-    doSetRunMode(RUN_MODE.NEED_BOOT)
-    // Wait a bit for the cpu to boot and then do reset.
-    setTimeout(() => {
-      doSetRunMode(RUN_MODE.NEED_RESET)
-      // After giving the reset some time, load the binary block.
-      setTimeout(() => {
-        loadBlock()
-      }, 200)
-    }, 200)
-  } else {
-    loadBlock()
+  doAutoboot(loadBlock)
+}
+
+export const doSetPastedText = (text: string) => {
+  const doPaste = () => {
+    sendPastedText(text)
   }
+  doAutoboot(doPaste)
 }
 
 const getDebugDump = () => {
   if (!isDebugging) return ''
-  const status = [get6502StateString()]
+  const status = []
   status.push(getZeroPage())
   const stackString = getStackString()
   for (let i = 0; i < Math.min(20, stackString.length); i++) {
     status.push(stackString[i])
   }
   return status.join('\n')
+}
+
+const getMemoryDump = () => {
+  if (isDebugging && cpuRunMode === RUN_MODE.PAUSED) {
+    return getBaseMemory()
+  }
+  return new Uint8Array()
 }
 
 const doGetDisassembly = () => {
@@ -404,26 +439,46 @@ const doGetDisassembly = () => {
 
 const updateExternalMachineState = () => {
   const state: MachineState = {
-    runMode: cpuRunMode,
-    s6502: s6502,
-    speed: speed,
+    addressGetTable: addressGetTable,
     altChar: SWITCHES.ALTCHARSET.isSet,
-    noDelayMode: !SWITCHES.COLUMN80.isSet && !SWITCHES.AN3.isSet,
-    textPage: getTextPage(),
-    lores: getTextPage(true),
-    hires: getHires(),
-    debugDump: getDebugDump(),
-    disassembly: doGetDisassembly(),
-    nextInstruction: getInstruction(s6502.PC),
+    breakpoints: breakpointMap,
     button0: SWITCHES.PB0.isSet,
     button1: SWITCHES.PB1.isSet,
     canGoBackward: getGoBackwardIndex() >= 0,
     canGoForward: getGoForwardIndex() >= 0,
-    maxState: maxState,
+    capsLock: true,  // ignored by main thread
+    colorMode: COLOR_MODE.COLOR,  // ignored by main thread
+    cpuSpeed: cpuSpeed,
+    debugDump: getDebugDump(),
+    disassembly: doGetDisassembly(),
+    helpText: '',  // ignored by main thread
+    hires: getHires(),
     iTempState: iTempState,
+    isDebugging: isDebugging,
+    lores: getTextPage(true),
+    memSize: 0,
+    memoryDump: getMemoryDump(),
+    nextInstruction: getInstruction(s6502.PC),
+    noDelayMode: !SWITCHES.COLUMN80.isSet && !SWITCHES.AN3.isSet,
+    runMode: cpuRunMode,
+    s6502: s6502,
+    speedMode: speedMode,
+    textPage: getTextPage(),
     timeTravelThumbnails: getTimeTravelThumbnails(),
   }
   passMachineState(state)
+}
+
+
+export const forceSoftSwitches = (addresses: Array<number> | null) => {
+  if (addresses) {
+    for (let i = 0; i < addresses.length; i++) {
+      overrideSoftSwitch(addresses[i])
+    }
+  } else {
+    restoreSoftSwitches()
+  }
+  updateExternalMachineState()
 }
 
 const doAdvance6502 = () => {
@@ -457,7 +512,7 @@ const doAdvance6502 = () => {
     }
   }
   iRefresh++
-  speed = Math.round((iRefresh * 1703) / (performance.now() - startTime)) / 100
+  cpuSpeed = Math.round((iRefresh * 1703) / (performance.now() - startTime)) / 100
   if (iRefresh % 2) {
     handleGamepads()
     updateExternalMachineState()

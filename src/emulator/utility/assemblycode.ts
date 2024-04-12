@@ -68,15 +68,21 @@ DMALO    EQU   DMACBASE+0
 DMAHI    EQU   DMACBASE+1
 DMALEN   EQU   DMACBASE+2
 
-FILLM8   EQU   0
-FILLM16  EQU   1
-COPYM    EQU   2
-MEMRD    EQU   3
-MEMWR    EQU   4
-RECTT    EQU   5
-HLINET   EQU   6
-BLITLT   EQU   7
-BLITLH   EQU   8
+CONFIG   EQU   0
+FILLM8   EQU   1
+FILLM16  EQU   2
+COPYM    EQU   3
+MEMRD    EQU   4
+MEMWR    EQU   5
+CLEAR    EQU   6
+FTRI     EQU   7
+TRI      EQU   8
+FRECT    EQU   9
+RECT     EQU   0xa
+LINE     EQU   0xb
+HLINE    EQU   0xc
+SCOPY    EQU   0xd
+PRESENT  EQU   0xFD
 EXIT     EQU   0xFE
 CHAIN    EQU   0xFF
 
@@ -86,11 +92,11 @@ loop     tya
          sta $800,y
          iny
          bne loop
-rloop    lda <PUSHBUF2
+rloop    lda <PUSHBUF
          sta DMALO
-         lda >PUSHBUF2
+         lda >PUSHBUF
          sta DMAHI
-         lda #PBLEN2
+         lda #PBLEN
          sta DMALEN
          inc XPOS
 kloop    lda $C000
@@ -100,61 +106,8 @@ kloop    lda $C000
          bne rloop
          rts
 
-PBLEN    EQU 31
-PUSHBUF  db MEMWR
-         db $00     ; turn off 80 store
-         db MEMWR
-         db $00     ; turn on 80 col
-         db RECTT
-         db 0x20
+PBLEN    EQU 2
+PUSHBUF  db CONFIG
          db 0
-         db 0
-         db 80
-         db 24
-         db RECTT
-         db 0
-         db 10
-         db 10
-         db 10
-         db 10
-         db HLINET
-         db 0
-         db 30
-         db 10
-         db 10
-         db BLITLT
-         dw $800
-         db 0
-         db 1
-         db 30
-         db 15
-         db 5
-         db 5
-         db 0
-         dw $ffff
-
-PBLEN2   EQU 26
-PUSHBUF2 db MEMRD
-         db $50   ; display gfx
-         db MEMRD
-         db $53   ; split screen
-         db MEMRD
-         db $54   ; page 1
-         db MEMRD
-         db $57   ; hires
-         db FILLM16
-         dw $ffff
-         dw $2000
-         db 0
-         dw $1000
-         db BLITLH
-         dw $800
-         db 28
-         db 0
-XPOS     db 0
-         db 0
-         db 28
-         db 5
-         db 0
-PBEND    db $FF
+XPOS     dw $ffff
 `

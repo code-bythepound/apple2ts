@@ -23,6 +23,23 @@ import { resetDMAC, enableDMACCard, onDMACVBL } from "./devices/dmac/dmac"
 import { getDisassembly, getInstruction, verifyAddressWithinDisassembly } from "./utility/disassemble"
 import { sendPastedText } from "./devices/keyboard"
 
+// dma callback returns the cycle count of cycles that were used
+let dmaCallback: (userdata: any) => number
+let dmaCBData: any
+let dmaAsserted = false
+
+export const assertDMA = (assert: boolean, fn: (userdata: any) => void, userdata: any) => {
+  dmaAsserted = assert;
+  if (dmaAsserted) {
+    dmaCallback = fn
+    dmaCBData = userdata
+  }
+}
+
+const processDMA = (): number => {
+    return dmaCallback(dmaCBData)
+}
+
 // let timerID: any | number = 0
 let startTime = 0
 let prevTime = 0
@@ -499,7 +516,7 @@ const doAdvance6502 = () => {
   }
   let cycleTotal = 0
   for (;;) {
-    const cycles = processInstruction();
+    const cycles = dmaAsserted ? processDMA() : processInstruction();
     if (cycles < 0) break
     cycleTotal += cycles;
     if (cycleTotal >= 12480) {

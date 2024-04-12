@@ -387,13 +387,16 @@ uint8_t AllocSprite(uint8_t width, uint8_t height)
   return i;
 }
 
+extern "C" void (*DMAByte)(uint32_t dest, uint32_t value) = nullptr;
+
 void DMAWrite(uint32_t dst, uint8_t * src, uint8_t inc, uint16_t len) 
 {
   cycleCount+=len;
-  uint8_t * dest = &memory[dst]; 
+  //uint8_t * dest = &memory[dst]; 
   for(int i=0;i<len;i++)
   {
-    *dest++ = *src;
+   // *dest++ = *src;
+   DMAByte(dst++, *src);
     src += inc; 
   }
 }
@@ -889,9 +892,9 @@ cmdLFRect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint8_t value
 }
 
 static void
-Clear()
+Clear(uint8_t value)
 {
-  memset(framebuffer, 0x00, fbWidth * fbHeight);
+  memset(framebuffer, value, fbWidth * fbHeight);
 }
 
 static void
@@ -1195,9 +1198,14 @@ cmdLScreenOffset(uint16_t xoff, uint16_t yoff)
 }
 
 EXPORT void
-cmdSetMode(uint16_t videoMode, uint16_t clear)
+cmdSetMode(uint16_t videoMode, uint16_t clear, uint32_t dmaBytePtr)
 {
+  // set pointer
+  DMAByte = reinterpret_cast<void (*)(uint32_t, uint32_t)>(dmaBytePtr);
+
+  uint8_t cv = 0;
   LOG(1,"Setting Mode: %d\n", videoMode);
+
   // (0=40 1=80 2=lo 3=lowmix 4=dlo 5=dlomix 6=hi 7=himix 8=dhi 9=dhimix)",
   switch( videoMode )
   {
@@ -1206,6 +1214,7 @@ cmdSetMode(uint16_t videoMode, uint16_t clear)
       fbHeight = 24;
       framebuffer = txtFramebuffer;
       SetBits(8);
+      cv = 0x20 | 0x80;
       break;
 
     case 1:
@@ -1213,6 +1222,7 @@ cmdSetMode(uint16_t videoMode, uint16_t clear)
       fbHeight = 24;
       framebuffer = txtFramebuffer;
       SetBits(8);
+      cv = 0x20 | 0x80;
       break;
 
     case 2:
@@ -1284,7 +1294,7 @@ cmdSetMode(uint16_t videoMode, uint16_t clear)
   ScreenRect.ymax = ScreenRect.y + ScreenRect.height;
 
   if (clear)
-    Clear();
+    Clear(cv);
 }
 
 EXPORT void Init()

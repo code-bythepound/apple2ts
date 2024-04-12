@@ -8,11 +8,17 @@ import { DMACLib } from "./DMACLib.js"
 
 // load dmac C++ module
 let dmacLib;
+let dmaBytePtr = 0;
 let Loaded = false;
+
+const DMAByte = (addr: number, value: number) => {
+  memSet(addr, value)
+}
 
 DMACLib().then(instance => {
   Loaded = true
   dmacLib = instance
+  dmaBytePtr = dmacLib.addFunction(DMAByte, 'vii')
 })
 
 let slot = 3
@@ -182,7 +188,7 @@ const ParseCmdBuffer = (): number => {
 
       case CMD.CONFIG: {
         let mode = buffer[pos++]
-        dmacLib._cmdSetMode(mode, 1)
+        dmacLib._cmdSetMode(mode, 1, dmaBytePtr)
       }
       break
 

@@ -106,8 +106,10 @@ kloop    lda $C000
          bne rloop
          rts
 
-PBLEN    EQU 2
+PBLEN    EQU 4
 PUSHBUF  db CONFIG
+         db 0
+         db PRESENT
          db 0
 XPOS     dw $ffff
 `

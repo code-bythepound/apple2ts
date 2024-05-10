@@ -212,8 +212,8 @@ const doBoot = () => {
   memoryReset()
   configureMachine()
   if (code.length > 0) {
-    const pcode = parseAssembly(0x300, code.split("\n"));
-    memory.set(pcode, 0x300);
+    const pcode = parseAssembly(0x900, code.split("\n"));
+    memory.set(pcode, 0x900);
   }
 //  testTiming()
   doReset()

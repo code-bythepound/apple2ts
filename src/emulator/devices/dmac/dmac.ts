@@ -1,4 +1,4 @@
-// DMAC Card for Apple2TS copyright Michael Morrison (codebythepound@gmail.com)
+// Virtual DMAC Card for Apple2TS copyright Michael Morrison (codebythepound@gmail.com)
 
 //import { interruptRequest } from "../cpu6502"
 import { memGetSoftSwitch, memSetSoftSwitch,
@@ -8,17 +8,23 @@ import { DMACLib } from "./DMACLib.js"
 
 // load dmac C++ module
 let dmacLib;
-let dmaBytePtr = 0;
+let dmaByteOutPtr = 0;
+let dmaByteInPtr = 0;
 let Loaded = false;
 
-const DMAByte = (addr: number, value: number) => {
+const DMAByteOut = (addr: number, value: number) => {
   memSet(addr, value)
+}
+
+const DMAByteIn = (addr: number): number => {
+  return memGet(addr)
 }
 
 DMACLib().then(instance => {
   Loaded = true
   dmacLib = instance
-  dmaBytePtr = dmacLib.addFunction(DMAByte, 'vii')
+  dmaByteOutPtr = dmacLib.addFunction(DMAByteOut, 'vii')
+  dmaByteInPtr  = dmacLib.addFunction(DMAByteIn, 'ii')
 })
 
 let slot = 3
@@ -33,7 +39,7 @@ export const enableDMACCard = (enable = true, aslot = 3) => {
   slot = aslot
 
   if (Loaded) {
-    dmacLib._Init();
+    dmacLib._Init(dmaByteOutPtr, dmaByteInPtr);
     console.log("Loaded..");
   } else {
     console.log("NOT LOADED..");
@@ -48,7 +54,7 @@ let pushBufferLength = 0
 
 const DMAPull = (addr: number, length: number) : Uint8Array => {
   // pushbuffers are always in the current bank
-  console.log("DMAC: DMAPull " + pushBufferAddr.toString(16) + " : " + length.toString(16) + " bytes")
+//  console.log("DMAC: DMAPull " + pushBufferAddr.toString(16) + " : " + length.toString(16) + " bytes")
   return getMemoryBlock( addr, length )
 }
 
@@ -77,6 +83,10 @@ const CMD = {
     LINE:    0x0b,  // general line
     HLINE:   0x0c,  // horizontal line
     SCOPY:   0x0d,  // sprite blit/copy
+    SSCOPY:  0x0e,  // sprite sub blit/copy
+    SUPLD:   0x0f,  // sprite upload
+    SCOFF:   0x10,  // clipping screen offset
+    SCRECT:  0x11,  // clipping screen rect
     PRESENT: 0xFD,  // present internal representation (dma to screen memory)
     EXIT:    0xFE,  // early exit
     CHAIN:   0xFF,  // chain next dma
@@ -122,6 +132,19 @@ const copyMem = (sbank:number, src:number, dbank:number, dest:number, length:num
   }
 }
 
+const FailCmd = (cmd: string, clen: number, brem: number): boolean => {
+  if (brem < clen)
+  {
+    console.log("ERROR ", brem, " args to ", cmd, " but expeted ", clen)
+    return true
+  }
+  else
+  {
+    //console.log("CMD: ", cmd, " len: ", clen, " remaining: ", brem)
+    return false
+  }
+}
+
 const ParseCmdBuffer = (): number => {
 
   let cycles = 0
@@ -131,9 +154,12 @@ const ParseCmdBuffer = (): number => {
   while( pos < buffer.length )
   {
     let cmd = buffer[pos++]
+    let brem = buffer.length - pos;
     switch (cmd)
     {
       case CMD.FILL8: {
+        if (FailCmd("fill8", 6, brem))
+          return;
         let value = buffer[pos++]
         let addr = buffer[pos++]
         addr += buffer[pos++] * 256
@@ -146,6 +172,8 @@ const ParseCmdBuffer = (): number => {
       break
 
       case CMD.FILL16: {
+        if (FailCmd("fill16", 7, brem))
+          return;
         let value = buffer[pos++]
         value += buffer[pos++] * 256
         let addr = buffer[pos++]
@@ -159,6 +187,8 @@ const ParseCmdBuffer = (): number => {
       break
 
       case CMD.COPY: {
+        if (FailCmd("copy", 8, brem))
+          return;
         let src = buffer[pos++]
         src += buffer[pos++] * 256
         let sbank = buffer[pos++]
@@ -173,6 +203,8 @@ const ParseCmdBuffer = (): number => {
       break
 
       case CMD.SSRD: {
+        if (FailCmd("ssrd", 1, brem))
+          return;
         let addr = buffer[pos++]
         readSS(addr)
         cycles += 2
@@ -180,6 +212,8 @@ const ParseCmdBuffer = (): number => {
       break
 
       case CMD.SSWR: {
+        if (FailCmd("sswr", 1, brem))
+          return;
         let addr = buffer[pos++]
         writeSS(addr)
         cycles += 2
@@ -187,17 +221,24 @@ const ParseCmdBuffer = (): number => {
       break
 
       case CMD.CONFIG: {
+        if (FailCmd("config", 1, brem))
+          return;
         let mode = buffer[pos++]
-        dmacLib._cmdSetMode(mode, 1, dmaBytePtr)
+        dmacLib._cmdSetMode(mode, 1)
       }
       break
 
       case CMD.CLEAR: {
-        dmacLib._Clear()
+        if (FailCmd("clear", 1, brem))
+          return;
+        let value = buffer[pos++]
+        dmacLib._cmdClear(value)
       }
       break
 
       case CMD.PRESENT: {
+        if (FailCmd("present", 1, brem))
+          return;
         let page = buffer[pos++]
         dmacLib._cmdPresent(page)
       }
@@ -205,17 +246,21 @@ const ParseCmdBuffer = (): number => {
 
       case CMD.FRECT:
       case CMD.RECT: {
+        if (FailCmd("rect", 5, brem))
+          return;
         let value = buffer[pos++]
         let x = buffer[pos++]
         let y = buffer[pos++]
         let width = buffer[pos++]
         let height = buffer[pos++]
-        dmacLib._cmdLFRect(x, y, width, height, value, 0)
+        dmacLib._cmdFRect(x, y, width, height, value, 0)
       }
       break
 
       case CMD.FTRI:
       case CMD.TRI: {
+        if (FailCmd("tri", 7, brem))
+          return;
         let value = buffer[pos++]
         let x1 = buffer[pos++]
         let y1 = buffer[pos++]
@@ -228,6 +273,8 @@ const ParseCmdBuffer = (): number => {
       break
 
       case CMD.LINE: {
+        if (FailCmd("line", 5, brem))
+          return;
         let value = buffer[pos++]
         let x1 = buffer[pos++]
         let y1 = buffer[pos++]
@@ -238,6 +285,8 @@ const ParseCmdBuffer = (): number => {
       break
 
       case CMD.HLINE: {
+        if (FailCmd("hline", 4, brem))
+          return;
         let value = buffer[pos++]
         let x = buffer[pos++]
         let y = buffer[pos++]
@@ -247,6 +296,8 @@ const ParseCmdBuffer = (): number => {
       break
 
       case CMD.SCOPY: {
+        if (FailCmd("scopy", 4, brem))
+          return;
         let id = buffer[pos++]
         let dx = buffer[pos++]
         let dy = buffer[pos++]
@@ -255,19 +306,53 @@ const ParseCmdBuffer = (): number => {
       }
       break
 
-      /*
-      case CMD.HBLITLT: {
-        let src = buffer[pos++]
-        src += buffer[pos++] * 256
-        let sbank = buffer[pos++]
+      case CMD.SUPLD: {
+        if (FailCmd("supld", 6, brem))
+          return;
+        let id = buffer[pos++]
+        let srcAddr = buffer[pos++]
+        srcAddr += buffer[pos++] * 256;
+        let width = buffer[pos++]
+        let height = buffer[pos++]
+        let mode = buffer[pos++]
+        dmacLib._cmdUploadSprite(id, srcAddr, width, height, mode)
+      }
+      break
+
+      case CMD.SSCOPY: {
+        if (FailCmd("sscopy", 8, brem))
+          return;
+        let id = buffer[pos++]
+        let dx = buffer[pos++]
+        let dy = buffer[pos++]
+        let sx = buffer[pos++]
+        let sy = buffer[pos++]
+        let width = buffer[pos++]
+        let height = buffer[pos++]
+        let mode = buffer[pos++]
+        dmacLib._cmdSubBlt(id, dx, dy, sx, sy, width, height, mode)
+      }
+      break
+
+      case CMD.SCOFF: {
+        if (FailCmd("scoff", 2, brem))
+          return;
+        let xoff = buffer[pos++]
+        let yoff = buffer[pos++]
+        dmacLib._cmdScreenOffset(xoff, yoff)
+      }
+      break
+
+      case CMD.SCRECT: {
+        if (FailCmd("screct", 4, brem))
+          return;
         let x = buffer[pos++]
         let y = buffer[pos++]
         let width = buffer[pos++]
-        let op = buffer[pos++]
-        hblitLToT(sbank, src, x, y, width, op)
+        let height = buffer[pos++]
+        dmacLib._cmdScreenRect(x, y, width, height)
       }
       break
-      */
 
       case CMD.EXIT:
         return cycles
@@ -285,17 +370,19 @@ const ParseCmdBuffer = (): number => {
 //
 // 7 6 5 4 3 2 1 0
 // | | | | | | | +-> \
-// | | | | | | +---> Max Cycles DMA 0=1/10 1=3/10 2=6/10 3=9/10
-// | | | | | +-----> Expanded memory Type 1=RamWorks 0=NONE
-// | | | | +-------> 0 = Text Mode, 1 = Gfx Mode 
-// | | | +---------> Alt Mode 0 = 40/single 1 = 80/Double 
-// | | +-----------> Txt/Gfx Page
+// | | | | | | +---> \  Mode 0-9
+// | | | | | +-----> /
+// | | | | +-------> /
+// | | | +---------> \  Max Cycles DMA 0=1/10 1=3/10 2=6/10 3=9/10
+// | | +-----------> /
 // | +-------------> Interrupt on Vblank
 // +---------------> Interrupt on transaction complete
 
+let rmod = 256
 let config = 0
 const SetConfig = (value : number) => {
   config = value
+  dmacLib._cmdSetMode(config&0xf, 1)
 }
 
 const GetConfig = () => {
@@ -338,6 +425,7 @@ const handleDMACIO = (addr: number, val = -1): number => {
       DMALEN:  0x02,  // Length of DMA buffer.  Initiates DMA 
       CONFIG:  0x03,  // Configuration register
       STATUS:  0x04,  // Status register
+      RANDOM:  0x05,  // Random number generator
   }
 
   switch (addr & 0x0f) {
@@ -382,6 +470,13 @@ const handleDMACIO = (addr: number, val = -1): number => {
           break
         } else
           return GetConfig()
+
+    case REG.RANDOM:
+        if(val >= 0) {
+          rmod = val ? val : 256
+          break
+        } else
+          return Math.floor(Math.random() * rmod);
 
     default:
         console.log('DMAC unknown register', (addr&0xf).toString(16))

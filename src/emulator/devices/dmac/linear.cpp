@@ -7,14 +7,7 @@
 #include <string.h>
 #include <math.h>
 #include <algorithm>
-#ifdef TST_HARNESS
-#include "xsharp21/texpoly.h"
-#define LOG cinterp.log
-#else
 #define LOG(n,...) { if(n > 0) printf(__VA_ARGS__); }
-#endif
-//#include "shifttab.h"
-//#include "ROPTable.h"
 #include "a2font.h"
 #include "ibmfont.h"
 
@@ -84,7 +77,7 @@ static uint16_t fbHeight = fbGHeight;
 static uint8_t vbits = 8;
 static uint8_t vmask = 0xff;
 static uint8_t bit8 = 0x80;
-static uint8_t rasterOp = 0x3;
+static uint8_t rasterOp = 0x2;
 static uint8_t ccompOp = 0x0;
 static uint8_t ccompColor = 0x0;
 static uint8_t primaryFontBits[8*256];
@@ -94,7 +87,7 @@ static uint32_t biFontWidth = 6;
 static uint32_t biFontHeight = 8;
 
 // bit reverse table for 4 bits
-uint8_t bitrev[16] = 
+uint8_t bitrev16[16] = 
 {
   0b00000000,
   0b00001000,
@@ -137,15 +130,20 @@ uint8_t paletteStack[MAX_PALETTE_STACK][16] =
     0b00001111,
   }
 };
-uint8_t *palette = paletteStack[0];
+uint8_t *curPalette = paletteStack[0];
 uint8_t paletteStackPtr = 0;
+
+inline uint8_t palette(uint8_t value)
+{
+  return curPalette[value&vmask];
+}
 
 void pushPalette()
 {
   if (paletteStackPtr < (MAX_PALETTE_STACK-1))
     paletteStackPtr++;
   
-  palette = paletteStack[paletteStackPtr];
+  curPalette = paletteStack[paletteStackPtr];
 }
 
 void popPalette()
@@ -153,24 +151,17 @@ void popPalette()
   if (paletteStackPtr > 0)
     paletteStackPtr--;
 
-  palette = paletteStack[paletteStackPtr];
+  curPalette = paletteStack[paletteStackPtr];
 }
 
 void loadPalette(uint8_t * newpal)
 {
   for(int i=0;i<16;i++)
-    palette[i] = bitrev[newpal[i]&0xf];
+    curPalette[i] = bitrev16[newpal[i]&vmask];
 }
 
-//uint8_t memory[65536*2];
 static int videoMode;
 static int cycleCount;
-
-#ifdef TST_HARNESS
-extern CommandInterp cinterp;
-extern long _strtol(JSContext *ctx, JSValue jsv, void * ptr, int base);
-#define xstrtol(a,b,c) _strtol(ctx,(a),(b),(c))
-#endif
 
 struct Point 
 { 
@@ -302,7 +293,6 @@ uint16_t gettxtaddr(uint8_t line, uint16_t page)
     return addr;
 }
 
-
 inline bool CCOMP(uint8_t fb)
 {
   switch (ccompOp)
@@ -340,74 +330,74 @@ uint8_t doROP(uint8_t fb, uint8_t sp)
     case 0x00:
       return 0;
     case 0x01:
-      return 0xf;
+      return vmask;
 
     case 0x02:
-      return (sp&0xf);
+      return (sp&vmask);
     case 0x03:
-      return (~sp&0xf);
+      return (~sp&vmask);
     case 0x04:
-      return (fb&0xf);
+      return (fb&vmask);
     case 0x05:
-      return (~fb&0xf);
+      return (~fb&vmask);
 
     case 0x06:
-      return ((fb&sp)&0xf);
+      return ((fb&sp)&vmask);
     case 0x07:
-      return ((~fb&sp)&0xf);
+      return ((~fb&sp)&vmask);
     case 0x08:
-      return ((fb&~sp)&0xf);
+      return ((fb&~sp)&vmask);
     case 0x09:
-      return ((~fb&~sp)&0xf);
+      return ((~fb&~sp)&vmask);
 
     case 0x0a:
-      return ((fb|sp)&0xf);
+      return ((fb|sp)&vmask);
     case 0x0b:
-      return ((~fb|sp)&0xf);
+      return ((~fb|sp)&vmask);
     case 0x0c:
-      return ((fb|~sp)&0xf);
+      return ((fb|~sp)&vmask);
     case 0x0d:
-      return ((~fb|~sp)&0xf);
+      return ((~fb|~sp)&vmask);
 
     case 0x0e:
-      return ((fb^sp)&0xf);
+      return ((fb^sp)&vmask);
     case 0x0f:
-      return ((~fb^sp)&0xf);
+      return ((~fb^sp)&vmask);
     case 0x10:
-      return ((fb^~sp)&0xf);
+      return ((fb^~sp)&vmask);
     case 0x11:
-      return ((~fb^~sp)&0xf);
+      return ((~fb^~sp)&vmask);
 
     case 0x12:
       // max
-      sp&=0xf;
-      fb&=0xf;
+      sp&=vmask;
+      fb&=vmask;
       return (sp>fb)?sp:fb;
     case 0x13:
       // min
-      sp&=0xf;
-      fb&=0xf;
+      sp&=vmask;
+      fb&=vmask;
       return (sp>fb)?fb:sp;
     case 0x14:
       // avg
-      sp&=0xf;
-      fb&=0xf;
+      sp&=vmask;
+      fb&=vmask;
       return (((fb+sp)>>1));
     case 0x15:
       // add with ceil
-      sp&=0xf;
-      fb&=0xf;
+      sp&=vmask;
+      fb&=vmask;
       sp = sp+fb;
-      return (sp>0xf)?0xf:sp;
+      return (sp>vmask)?vmask:sp;
     case 0x16:
       // fb-sp with floor
-      sp&=0xf;
-      fb&=0xf;
+      sp&=vmask;
+      fb&=vmask;
       return (sp>fb)?0x0:(fb-sp);
     case 0x17:
       // sb-fp with floor
-      sp&=0xf;
-      fb&=0xf;
+      sp&=vmask;
+      fb&=vmask;
       return (fb>sp)?0x0:(sp-fb);
   }
 }
@@ -419,7 +409,16 @@ inline void ROP(uint8_t *fb, uint8_t sp)
 
   // now check color compare
   if (!CCOMP(upd))
-    *fb = (fbb&0xf0) | upd;
+    *fb = (fbb&(~vmask)) | upd;
+}
+
+inline void spriteROP(uint8_t *fb, uint8_t sp)
+{
+  // first check high bit transparency
+  if (sp > 0x7f)
+    return;
+
+  return ROP(fb, palette(sp));
 }
 
 uint8_t BearBits[] = {
@@ -538,161 +537,6 @@ uint8_t PacManBits1[] = {
 	128,128,0,0,128,128,128,128,128,128,128,128,128,128,128,128,128,128,
 	128,128,0,0,128,128,128,128,128,128,128,128,128,128,128,128,128,128
 	};
-
-int GetImagePixel(char *tex, int width, int u, int v)
-{
-  //LOG(1,"tex(%d,%d)\n", u, v);
-  u %= 20;
-  v %= 20;
-  uint8_t texel = BearBits[u + v*20];
-
-  switch( texel )
-  {
-    case 60:
-      texel = 6;
-      break;
-    case 20:
-      texel = 2;
-      break;
-    default:
-      break;
-  }
-
-  return texel & vmask;
-}
-
-#if 0
-void WritePixelX(int x, int y, int pix)
-{
-  uint8_t *fb = framebuffer;
-
-  //LOG(1,"%d,%d\n", x, y); 
-  fb[x + y*fbWidth] = pix;
-}
-#endif
-
-#ifdef TST_HARNESS
-/* Texture-map-draw the scan line between two edges. */
-void ScanOutLine(EdgeScan * LeftEdge, EdgeScan * RightEdge)
-{
-   extern char * TexMapBits;
-   extern int TexMapWidth;
-   extern int DestY;
-   Fixedpoint SourceX;
-   Fixedpoint SourceY;
-   int DestX = LeftEdge->DestX;
-   int DestXMax = RightEdge->DestX;
-   Fixedpoint DestWidth;
-   Fixedpoint SourceStepX, SourceStepY;
-
-   /* Nothing to do if fully X clipped */
-   if ((DestXMax <= ScreenRect.x) || (DestX >= ScreenRect.xmax)) {
-      return;
-   }
-
-   if ((DestXMax - DestX) <= 0) {
-      return;  /* nothing to draw */
-   }
-
-   SourceX = LeftEdge->SourceX;
-   SourceY = LeftEdge->SourceY;
-
-   /* Width of destination scan line, for scaling. Note: because this is an
-      integer-based scaling, it can have a total error of as much as nearly
-      one pixel. For more precise scaling, also maintain a fixed-point DestX
-      in each edge, and use it for scaling. If this is done, it will also
-      be necessary to nudge the source start coordinates to the right by an
-      amount corresponding to the distance from the the real (fixed-point)
-      DestX and the first pixel (at an integer X) to be drawn) */
-   DestWidth = INT_TO_FIXED(DestXMax - DestX);
-
-   /* Calculate source steps that correspond to each dest X step (across
-      the scan line) */
-   SourceStepX = FixedDiv(RightEdge->SourceX - SourceX, DestWidth);
-   SourceStepY = FixedDiv(RightEdge->SourceY - SourceY, DestWidth);
-
-   /* Advance 1/2 step in the stepping direction, to space scanned pixels
-      evenly between the left and right edges. (There's a slight inaccuracy
-      in dividing negative numbers by 2 by shifting rather than dividing,
-      but the inaccuracy is in the least significant bit, and we'll just
-      live with it.) */
-   //SourceX += SourceStepX >> 1;
-   //SourceY += SourceStepY >> 1;
-   SourceX += SourceStepX;
-   SourceY += SourceStepY;
-   //SourceX -= SourceStepX >> 1;
-   //SourceY -= SourceStepY >> 1;
-
-#if 0
-   printf("SourceStep: %.4f,%.4f Source: %.4f,%.4f\n", 
-        FIXED_TO_FLOAT(SourceStepX),
-        FIXED_TO_FLOAT(SourceStepY),
-        FIXED_TO_FLOAT(SourceX),
-        FIXED_TO_FLOAT(SourceY));
-#endif
-
-   /* Clip right edge if necssary */
-   if (DestXMax > ScreenRect.xmax)
-      DestXMax = ScreenRect.xmax;
-
-   /* Clip left edge if necssary */
-   if (DestX < ScreenRect.x) {
-      SourceX += FixedMul(SourceStepX, INT_TO_FIXED(ScreenRect.x - DestX));
-      SourceY += FixedMul(SourceStepY, INT_TO_FIXED(ScreenRect.x - DestX));
-      DestX = ScreenRect.x;
-   }
-
-   /* Scan across the destination scan line, updating the source image
-      position accordingly */
-   uint8_t * fb = &framebuffer[DestX + DestY * fbWidth];
-   for (; DestX<DestXMax; DestX++) {
-      /* Get the currently mapped pixel out of the image and draw it to
-         the screen */
-      //WritePixelX(DestX, DestY,
-      *fb++ = GetImagePixel(TexMapBits, TexMapWidth,
-            ROUND_FIXED_TO_INT(SourceX), ROUND_FIXED_TO_INT(SourceY));
-            //FIXED_TO_INT(SourceX), FIXED_TO_INT(SourceY)) );
-
-      /* Point to the next source pixel */
-      SourceX += SourceStepX;
-      SourceY += SourceStepY;
-   }
-}
-
-/* Texture-map-draw the scan line between two edges. */
-void ScanOutLineFill(EdgeScan * LeftEdge, EdgeScan * RightEdge, unsigned char texel)
-{
-   extern int DestY;
-   int DestX = LeftEdge->DestX;
-   int DestXMax = RightEdge->DestX;
-
-   /* Nothing to do if fully X clipped */
-   if ((DestXMax <= ScreenRect.x) || (DestX >= ScreenRect.xmax)) {
-      return;
-   }
-
-   if ((DestXMax - DestX) <= 0) {
-      return;  /* nothing to draw */
-   }
-
-   /* Clip right edge if necssary */
-   if (DestXMax > ScreenRect.xmax)
-      DestXMax = ScreenRect.xmax;
-
-   /* Clip left edge if necssary */
-   if (DestX < ScreenRect.x) {
-      DestX = ScreenRect.x;
-   }
-
-   /* Scan across the destination scan line, updating the source image
-      position accordingly */
-   uint8_t * fb = &framebuffer[DestX + DestY * fbWidth];
-   for (; DestX<DestXMax; DestX++) {
-      //WritePixelX(DestX, DestY, texel);
-      *fb++ = texel;   
-   }
-}
-#endif
 
 void AllocSprite(uint8_t id, uint8_t width, uint8_t height)
 {
@@ -870,14 +714,16 @@ void lLine(Point& p0, Point& p1, uint8_t value)
 		if (longLen>0) {
 			longLen+=p0.y;
 			for (j=half+(p0.x<<shift);p0.y<=longLen;++p0.y) {
-				fb[(j >> shift) + p0.y*fbWidth] = value;	
+				//fb[(j >> shift) + p0.y*fbWidth] = value;	
+				ROP(&fb[(j >> shift) + p0.y*fbWidth], value);	
 				j+=decInc;
 			}
 			return;
 		}
 		longLen+=p0.y;
 		for (j=half+(p0.x<<shift);p0.y>=longLen;--p0.y) {
-      fb[(j >> shift) + p0.y*fbWidth] = value;	
+      //fb[(j >> shift) + p0.y*fbWidth] = value;
+      ROP(&fb[(j >> shift) + p0.y*fbWidth], value);
 			j-=decInc;
 		}
 		return;	
@@ -886,14 +732,16 @@ void lLine(Point& p0, Point& p1, uint8_t value)
 	if (longLen>0) {
 		longLen+=p0.x;
 		for (j=half+(p0.y<<shift);p0.x<=longLen;++p0.x) {
-			fb[p0.x +(j >> shift)*fbWidth] = value;
+			//fb[p0.x +(j >> shift)*fbWidth] = value;
+			ROP(&fb[p0.x +(j >> shift)*fbWidth], value);
 			j+=decInc;
 		}
 		return;
 	}
 	longLen+=p0.x;
 	for (j=half+(p0.y<<shift);p0.x>=longLen;--p0.x) {
-    fb[p0.x +(j >> shift)*fbWidth] = value;
+    //fb[p0.x +(j >> shift)*fbWidth] = value;
+    ROP(&fb[p0.x +(j >> shift)*fbWidth], value);
 		j-=decInc;
 	}
 }
@@ -968,7 +816,7 @@ hline(uint16_t x, uint16_t y, uint16_t width, uint8_t value, uint8_t mode)
 {
   // values already clipped
   
-  value &= vmask;
+  //value &= vmask;
 
   // convert to byte position to start
   uint8_t * fb = &framebuffer[fbWidth * y + x];
@@ -990,8 +838,8 @@ hline(uint16_t x, uint16_t y, uint16_t width, uint8_t value, uint8_t mode)
 static void
 lHline(uint16_t x, uint16_t y, uint16_t width, uint8_t value, uint8_t mode)
 {
-  // clip against virtual FB values
-  
+  value = palette(value); 
+
   // clip
   if (y >= fbHeight || x >= fbWidth)
     return;
@@ -1009,7 +857,8 @@ lFRect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint8_t value, u
   if (!Intersect(result, Rect(x,y,width,height), ScreenRect))
     return;
 
-  //printf("%d,%d [%d %d]\n", result.x, result.y, result.width, result.height);
+  value = palette(value);
+
   while(result.height--)
   {
     hline(result.x, result.y++, result.width, value, mode);
@@ -1032,35 +881,6 @@ lTriangle(Point& p0, Point& p1, Point& p2, uint8_t value)
 
   int total_height = p2.y-p0.y; 
   int l=-1;
-  for (int i=0; i<total_height; i++) 
-  {
-      bool second_half = i>p1.y-p0.y || p1.y==p0.y; 
-      int segment_height = second_half ? p2.y-p1.y : p1.y-p0.y; 
-      float alpha = (float)i/total_height; 
-      float beta  = (float)(i-(second_half ? p1.y-p0.y : 0))/segment_height; // be careful: with above conditions no division by zero here 
-      Point A =               p0 + (p2-p0)*alpha; 
-      Point B = second_half ? p1 + (p2-p1)*beta : p0 + (p1-p0)*beta; 
-      if (A.x>B.x) 
-        A.swap(B); 
-
-      lHline( A.x, A.y, B.x-A.x, value,0 );
-  }
-}
-
-void
-xTriangle(Point& p0, Point& p1, Point& p2, uint8_t value)
-{
-  if (p0.y==p1.y && p0.y==p2.y) 
-  {
-    return; // skip degenerates
-  }
-
-  // sort the vertices, p0, p1, p2 lower−to−upper (bubblesort yay!) 
-  if (p0.y>p1.y) p0.swap(p1); 
-  if (p0.y>p2.y) p0.swap(p2); 
-  if (p1.y>p2.y) p1.swap(p2); 
-
-  int total_height = p2.y-p0.y; 
   for (int i=0; i<total_height; i++) 
   {
       bool second_half = i>p1.y-p0.y || p1.y==p0.y; 
@@ -1107,6 +927,7 @@ spriteCopyRect(SpriteHeader * sprite, const Rect& clip, uint8_t mode)
     }
     break;
     
+#if 0
 #if 0
     //zero transparent
     case 1:
@@ -1173,6 +994,7 @@ spriteCopyRect(SpriteHeader * sprite, const Rect& clip, uint8_t mode)
       }
     }
     break;
+#endif
 
   //   0123456789
   //      |
@@ -1204,6 +1026,7 @@ spriteCopyRect(SpriteHeader * sprite, const Rect& clip, uint8_t mode)
     //  0111
     //  1011
     //  1111
+    default:
     case 3: // normal
     case 7: // rev
     case 11: // flip
@@ -1229,7 +1052,9 @@ spriteCopyRect(SpriteHeader * sprite, const Rect& clip, uint8_t mode)
       {
         for(uint16_t j=0;j<clip.width;j++)
         {
-          *fb++ = sp[off];
+          //*fb++ = sp[off];
+          spriteROP(fb,sp[off]);
+          fb++;
           off += xinc;
         }
         fb += scw;
@@ -1765,7 +1590,7 @@ presentHgr80(uint16_t page, bool mix)
       for(p=6;p>=0;p--)
       {
         pixel <<= 4;
-        //pixel |= bitrev[fb[i+p] & 0xf];
+        //pixel |= bitrev16[fb[i+p] & 0xf];
         pixel |= (fb[i+p] & 0xf);
       }
 

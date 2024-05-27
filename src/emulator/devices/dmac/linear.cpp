@@ -10,6 +10,7 @@
 #define LOG(n,...) { if(n > 0) printf(__VA_ARGS__); }
 #include "a2font.h"
 #include "ibmfont.h"
+#include "rallyx.h"
 
 #include <emscripten/emscripten.h>
 
@@ -60,6 +61,7 @@ static uint8_t txtFramebuffer[80*48];
 static uint8_t dmabuffer[80];
 static uint8_t spriteMem[128*1024];
 static uint32_t spriteid[256] = {0};
+static uint8_t arrayBuf[32*32]; // 1024 bytes, enough for a 32x32 grid of 8x8 pixels
 static uint8_t  nextSpriteId = 1;
 static uint32_t nextSpriteMem = 2;
 static uint16_t fbGWidth = 140;
@@ -865,6 +867,21 @@ lFRect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint8_t value, u
   }
 }
 
+static void
+lPatRect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint8_t pattern, uint8_t mode)
+{
+  Rect result;
+  if (!Intersect(result, Rect(x,y,width,height), ScreenRect))
+    return;
+
+#if 0
+  while(result.height--)
+  {
+    hline(result.x, result.y++, result.width, value, mode);
+  }
+#endif
+}
+
 // NOTE: modified from here: https://github.com/ssloy/tinyrenderer/wiki/Lesson-2:-Triangle-rasterization-and-back-face-culling
 void
 lTriangle(Point& p0, Point& p1, Point& p2, uint8_t value)
@@ -1269,6 +1286,87 @@ cmdSubBlt(uint8_t id, uint16_t destx, uint16_t desty, uint16_t sx, uint16_t sy, 
   return false;
 }
 
+// srcAddr
+// +-------------------+
+// |                   |
+// | X,Y +--W---+      |
+// |     | to   |      |
+// |     |      H      |
+// |     |screen|      |
+// |     +------+      |
+// |                   |
+// +-------mod---------+
+                      
+// uses arrayBuf memory
+EXPORT bool
+cmdUploadArray(uint8_t id, uint16_t srcAddr, uint16_t x, uint16_t y, uint16_t mod, uint8_t w, uint8_t h)
+{
+  uint8_t *dstLine = arrayBuf;
+  uint16_t srcLine = srcAddr + (y * mod) + x;
+
+  // dma to arraybuf
+  for(int i=0;i<h;i++)
+  {
+    DMARead(dstLine, srcLine, w);
+    srcLine += mod;
+    dstLine += w;
+  }
+
+  return true;
+}
+
+bool
+cmdUploadArrayI(uint8_t id, uint8_t * srcAddr, uint16_t x, uint16_t y, uint16_t mod, uint8_t w, uint8_t h)
+{
+  uint8_t *dstLine = arrayBuf;
+  uint8_t *srcLine = srcAddr + (y * mod) + x;
+
+  // copy to arraybuf
+  for(int i=0;i<h;i++)
+  {
+    memcpy(dstLine, srcLine, w);
+    srcLine += mod;
+    dstLine += w;
+  }
+
+  return true;
+}
+
+// uses arrayBuf memory
+EXPORT bool
+cmdArrayBlt(uint8_t id, uint16_t dx, uint16_t dy, uint16_t w, uint16_t h, uint8_t spoffset, uint8_t mode)
+{
+  // read array and begin blitting sprites
+  uint16_t offset = 0;
+  uint16_t x = dx;
+  uint16_t y = dy;
+  uint16_t lh = 0;
+  for(uint16_t i=0;i<h;i++)
+  {
+    x = dx;
+    y += lh;
+    for(uint16_t j=0;j<w;j++)
+    {
+      uint8_t which = arrayBuf[offset++] + spoffset; 
+      uint32_t mem = spriteid[which];
+      if (mem)
+      {
+        SpriteHeader * sprite = (SpriteHeader*)&spriteMem[mem];
+        spriteCopy(sprite, x, y, mode);
+        x += sprite->width;
+        lh = sprite->height;
+      }
+      else
+      {
+        // not sure what to do here - keep going?
+        LOG(1,"sprite id %d not found\n", id);
+      }
+    }
+  }
+
+  return true;
+}
+
 #if 0
 EXPORT void
 cmdSBlt(JS_ARGS)
@@ -1638,23 +1736,59 @@ cmdPresent(uint16_t page)
   }
 #endif
 
-  cmdBlt(4, 0, 5, 1);
-  cmdBlt(4, 20, 5, 1);
-  cmdBlt(4, 40, 5, 1);
-  cmdBlt(4, 60, 5, 1);
-  cmdBlt(4, 80, 5, 1);
+#if 1
+  // 15,53
+  //cmdUploadArrayI(0, rx::map, 15, 53, rx::mapWidth, 15, 10);
+  //cmdArrayBlt(0, 0, 0, 15, 10, 3, 1);
+  cmdUploadArrayI(0, rx::map, 5, 5, rx::mapWidth, 256/rx::tileWidth, 256/rx::tileHeight);
+  cmdArrayBlt(0, 0, 0, 256/rx::tileWidth, 256/rx::tileHeight, 3, 1);
+#endif
 
-  cmdBlt(4, 100+0, 5, 1);
-  cmdBlt(4, 100+20, 5, 1);
-  cmdBlt(4, 100+40, 5, 1);
-  cmdBlt(4, 100+60, 5, 1);
-  cmdBlt(4, 100+80, 5, 1);
+#if 0
+  uint8_t pal0[16] = {15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0};
+  uint8_t pal1[16] = {15,13,11,9,7,5,3,1,0,2,4,6,8,10,12,14};
 
-  cmdBlt(4, 100+0, 190, 1);
-  cmdBlt(4, 100+20, 190, 1);
-  cmdBlt(4, 100+40, 190, 1);
-  cmdBlt(4, 100+60, 190, 1);
-  cmdBlt(4, 100+80, 190, 1);
+  cmdBlt(1, 0, 5, 1);
+  pushPalette();
+  loadPalette(pal0);
+  cmdBlt(1, 20, 5, 1);
+  popPalette();
+  cmdBlt(1, 40, 5, 1);
+  pushPalette();
+  loadPalette(pal1);
+  cmdBlt(1, 60, 5, 1);
+  popPalette();
+  cmdBlt(1, 80, 5, 1);
+
+  for(int i=0;i<10;i++)
+  {
+    cmdROP(i); 
+    cmdBlt(1, 0+20*i, 50, (3+i)&0xf);
+  }
+  for(int i=11;i<21;i++)
+  {
+    cmdROP(i); 
+    cmdBlt(1, 0+20*(i-10), 100, (3+i)&0xf);
+  }
+  for(int i=22;i<23;i++)
+  {
+    cmdROP(i); 
+    cmdBlt(1, 0+20*(i-20), 150, (3+i)&0xf);
+  }
+  cmdROP(2);
+
+  cmdBlt(2, 100+0, 5, 1);
+  cmdBlt(2, 100+20, 5, 1);
+  cmdBlt(2, 100+40, 5, 1);
+  cmdBlt(2, 100+60, 5, 1);
+  cmdBlt(2, 100+80, 5, 1);
+
+  cmdBlt(2, 100+0, 190, 1);
+  cmdBlt(2, 100+20, 190, 1);
+  cmdBlt(2, 100+40, 190, 1);
+  cmdBlt(2, 100+60, 190, 1);
+  cmdBlt(2, 100+80, 190, 1);
+#endif
 
   frame++;
   // (0=40 1=80 2=lo 3=lowmix 4=dlo 5=dlomix 6=hi 7=himix 8=dhi 9=dhimix)",
@@ -1796,13 +1930,38 @@ cmdSetMode(uint16_t vMode, uint16_t clear)
   LOG(0,"Setting Mode: %d (%dx%d) (%s) %d bits\n", videoMode, fbWidth, fbHeight, ((framebuffer == gfxFramebuffer)?"GFX":"TXT"), vbits);
 }
 
+void setupRallyX(uint8_t startid)
+{
+  uint8_t id = startid;
+
+  for(int i=0;i<rx::tileCount;i++)
+  {
+    AllocSprite(id, rx::tileWidth,rx::tileHeight);
+    uint32_t mem = spriteid[id];
+    SpriteHeader * sprite = (SpriteHeader*)&spriteMem[mem];
+    sprite->width = rx::tileWidth;
+    sprite->height = rx::tileHeight;
+    sprite->mode = 0;
+    sprite->id = id;
+    // DMARead..
+    memcpy(sprite->data, rx::tiles[i], rx::tileWidth*rx::tileHeight);
+
+    id++;
+  }
+}
+
 EXPORT void Init(uint32_t dmaByteOutPtr, uint32_t dmaByteInPtr)
 {
   // set pointer
   DMAByteOut = reinterpret_cast<void (*)(uint32_t, uint32_t)>(dmaByteOutPtr);
   DMAByteIn  = reinterpret_cast<uint32_t (*)(uint32_t)>(dmaByteInPtr);
 
-  uint8_t id = 1;
+
+  uint8_t id = 0;
+  uint32_t mem;
+  SpriteHeader * sprite = nullptr;
+#if 0
+  id++;
   AllocSprite(id, 20,20);
   LOG(1,"default sprite: %d\n", id);
   uint32_t mem = spriteid[id];
@@ -1825,6 +1984,7 @@ EXPORT void Init(uint32_t dmaByteOutPtr, uint32_t dmaByteInPtr)
   sprite->id = id;
   // DMARead..
   memcpy(sprite->data, BearBits2, 20*20);
+#endif
 
   id++;
   AllocSprite(id, 18,21);
@@ -1849,6 +2009,9 @@ EXPORT void Init(uint32_t dmaByteOutPtr, uint32_t dmaByteInPtr)
   sprite->id = id;
   // DMARead..
   memcpy(sprite->data, PacManBits1, 18*42);
+
+  id++;
+  setupRallyX(id);
 
   createFont();
 }

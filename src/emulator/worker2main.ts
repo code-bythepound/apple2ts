@@ -1,7 +1,8 @@
 import { doSetRunMode,
   doGetSaveState, doRestoreSaveState, doSetSpeedMode,
   doGoBackInTime, doGoForwardInTime,
-  doStepInto, doStepOver, doStepOut, doSetBinaryBlock, doSetIsDebugging, doSetDisassembleAddress, doGotoTimeTravelIndex, doSetState6502, doTakeSnapshot, doGetSaveStateWithSnapshots, doSetThumbnailImage, doSetPastedText, forceSoftSwitches } from "./motherboard";
+  doStepInto, doStepOver, doStepOut, doSetBinaryBlock, doSetIsDebugging, doSetDisassembleAddress, doGotoTimeTravelIndex, doSetState6502, doTakeSnapshot, doGetSaveStateWithSnapshots, doSetThumbnailImage, doSetPastedText, forceSoftSwitches, 
+  doSetMemory} from "./motherboard";
 import { doSetDriveProps } from "./devices/drivestate"
 import { sendPastedText, sendTextToEmulator } from "./devices/keyboard"
 import { pressAppleCommandKey, setGamepads } from "./devices/joystick"
@@ -10,7 +11,7 @@ import { doSetBreakpoints } from "./cpu6502";
 import { MouseCardEvent } from "./devices/mouse";
 import { receiveMidiData } from "./devices/passport/passport";
 import { receiveCommData } from "./devices/superserial/serial";
-import { doSetRAMWorks, memory } from "./memory";
+import { doSetRamWorks } from "./memory";
 
 // This file must have worker types, but not DOM types.
 // The global should be that of a dedicated worker.
@@ -19,8 +20,13 @@ import { doSetRAMWorks, memory } from "./memory";
 declare const self: DedicatedWorkerGlobalScope;
 export {};
 
+let isTesting = false
+export const setIsTesting = () => {
+  isTesting = true
+}
+
 const doPostMessage = (msg: MSG_WORKER, payload: MessagePayload) => {
-  self.postMessage({msg, payload});
+  if (!isTesting) self.postMessage({msg, payload});
 }
 
 export const passMachineState = (state: MachineState) => {
@@ -39,8 +45,8 @@ export const passDriveSound = (sound: DRIVE) => {
   doPostMessage(MSG_WORKER.DRIVE_SOUND, sound)
 }
 
-const passSaveState = (saveState: EmulatorSaveState) => {
-  doPostMessage(MSG_WORKER.SAVE_STATE, saveState)
+const passSaveState = (sState: EmulatorSaveState) => {
+  doPostMessage(MSG_WORKER.SAVE_STATE, sState)
 }
 
 export const passRumble = (params: GamePadActuatorEffect) => {
@@ -160,7 +166,7 @@ if (typeof self !== 'undefined') {
       }
       case MSG_MAIN.SET_MEMORY: {
         const setmem = e.data.payload
-        memory[setmem.address] = setmem.value
+        doSetMemory(setmem.address, setmem.value)
         break
       }
       case MSG_MAIN.COMM_DATA:
@@ -169,8 +175,8 @@ if (typeof self !== 'undefined') {
       case MSG_MAIN.MIDI_DATA:
         receiveMidiData(e.data.payload)
         break
-      case MSG_MAIN.RAMWORKS:
-        doSetRAMWorks(e.data.payload as boolean)
+      case MSG_MAIN.RamWorks:
+        doSetRamWorks(e.data.payload as number)
         break
       case MSG_MAIN.SOFTSWITCHES:
         forceSoftSwitches(e.data.payload)

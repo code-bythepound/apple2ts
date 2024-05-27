@@ -49,6 +49,7 @@ type STATE6502 = {
 
 type Apple2SaveState = {
   s6502: STATE6502,
+  extraRamSize: number,
   softSwitches: {[name: string]: boolean},
   memory: string
 }
@@ -62,8 +63,6 @@ type DisplayProps = {
   openAppleKeyMode: number,
   closedAppleKeyMode: number,
   showFileOpenDialog: {show: boolean, drive: number},
-  darkMode: boolean,
-  setDarkMode: (darkMode: boolean) => void,
   updateDisplay: UpdateDisplay,
   handleCtrlDown: (mode: number) => void,
   handleOpenAppleDown: (mode: number) => void,
@@ -80,6 +79,7 @@ type MachineState = {
   canGoBackward: boolean,
   canGoForward: boolean,
   capsLock: boolean,
+  darkMode: boolean,
   colorMode: COLOR_MODE,
   cpuSpeed: number,
   debugDump: string,
@@ -89,7 +89,7 @@ type MachineState = {
   iTempState: number,
   isDebugging: boolean,
   lores: Uint8Array,
-  memSize: number,
+  extraRamSize: number,
   memoryDump: Uint8Array,
   nextInstruction: string,
   noDelayMode: boolean,
@@ -135,6 +135,7 @@ type DriveSaveState = {
 type DisplaySaveState = {
   name: string,
   date: string,
+  version: number,
   colorMode: number,
   capsLock: boolean,
   audioEnable: boolean,

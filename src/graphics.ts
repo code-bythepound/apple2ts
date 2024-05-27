@@ -3,9 +3,13 @@ import { handleGetAltCharSet, handleGetTextPage,
 import { getPrintableChar, COLOR_MODE, TEST_GRAPHICS, hiresLineToAddress } from "./emulator/utility/utility"
 import { convertColorsToRGBA, drawHiresTile, getHiresColors, getHiresGreen } from "./graphicshgr"
 import { TEXT_AMBER, TEXT_GREEN, TEXT_WHITE, loresAmber, loresColors, loresGreen, loresWhite, translateDHGR } from "./graphicscolors"
-const xmargin = 0.075
-const ymargin = 0.075
+const isTouchDevice = "ontouchstart" in document.documentElement
+const xmargin = isTouchDevice ? 0.01 : 0.075
+const ymargin = isTouchDevice ? 0.01 : 0.075
 let frameCount = 0
+
+export const nRowsHgrMagnifier = 16
+export const nColsHgrMagnifier = 2
 
 // Convert canvas coordinates (absolute to the entire browser window)
 // to normalized HGR screen coordinates.
@@ -232,13 +236,15 @@ export const getOverrideHiresPixels = (x: number, y: number) => {
   // Assume this is 40 x 192
   const hgrPage = handleGetHires()  // 40x160, 40x192, 80x160, 80x192
   if (hgrPage.length !== (40 * 192)) return null;
-  const result: number[][] = new Array(8).fill([0, 0, 0])
-  for (let j = y; j < (y + 8); j++) {
+  const result: number[][] = new Array(nRowsHgrMagnifier)
+  for (let j = y; j < (y + nRowsHgrMagnifier); j++) {
+    result[j - y] = new Array(1 + nColsHgrMagnifier)
     if (j >= 0 && j < 192) {
-      const value1 = hgrPage[j * 40 + x]
-      const value2 = hgrPage[j * 40 + x + 1]
       const addr = x + hiresLineToAddress(doPage2 ? 0x4000 : 0x2000, j)
-      result[j - y] = [addr, value1, value2]
+      result[j - y][0] = addr
+      for (let i = 0; i < nColsHgrMagnifier; i++) {
+        result[j - y][i + 1] = hgrPage[j * 40 + x + i]
+      }
     }
   }
   return result
@@ -329,7 +335,7 @@ export const getCanvasSize = () => {
   let width = window.innerWidth ? window.innerWidth : window.outerWidth
   let height = window.innerHeight ? window.innerHeight : (window.outerHeight - 150)
   height -= isTouchDevice ? 40 : 200
-  width -= isTouchDevice ? 8 : 20
+  width -= isTouchDevice ? 0 : 40
   if (!isTouchDevice && handleGetIsDebugging()) {
     width /= 2
   }

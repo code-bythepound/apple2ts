@@ -1,4 +1,4 @@
-import { RUN_MODE, DRIVE, MSG_WORKER, MSG_MAIN, MouseEventSimple, default6502State, COLOR_MODE } from "./emulator/utility/utility"
+import { RUN_MODE, DRIVE, MSG_WORKER, MSG_MAIN, MouseEventSimple, default6502State, COLOR_MODE, TEST_DEBUG } from "./emulator/utility/utility"
 import { clickSpeaker, emulatorSoundEnable } from "./devices/speaker"
 import { startupTextPage } from "./panels/startuptextpage"
 import { doRumble } from "./devices/gamepad"
@@ -12,7 +12,7 @@ import { doSetDriveProps } from "./devices/driveprops"
 
 let worker: Worker | null = null
 
-let saveStateCallback: (saveState: EmulatorSaveState) => void
+let saveStateCallback: (sState: EmulatorSaveState) => void
 
 export const setMain2Worker = (workerIn: Worker) => {
   worker = workerIn
@@ -76,6 +76,11 @@ export const passCapsLock = (lock: boolean) => {
   machineState.capsLock = lock
 }
 
+export const passDarkMode = (mode: boolean) => {
+  // See comment under passColorMode
+  machineState.darkMode = mode
+}
+
 export const passHelpText = (helptext: string) => {
   // See comment under passColorMode
   machineState.helpText = helptext
@@ -97,8 +102,8 @@ export const passTimeTravelSnapshot = () => {
   doPostMessage(MSG_MAIN.TIME_TRAVEL_SNAPSHOT, true)
 }
 
-export const passRestoreSaveState = (saveState: EmulatorSaveState) => {
-  doPostMessage(MSG_MAIN.RESTORE_STATE, saveState)
+export const passRestoreSaveState = (sState: EmulatorSaveState) => {
+  doPostMessage(MSG_MAIN.RESTORE_STATE, sState)
 }
 
 export const passKeypress = (text: string) => {
@@ -158,10 +163,10 @@ const passThumbnailImage = (thumbnail: string) => {
   doPostMessage(MSG_MAIN.THUMBNAIL_IMAGE, thumbnail)
 }
 
-export const passSetRAMWorks = (set: boolean) => {
-  doPostMessage(MSG_MAIN.RAMWORKS, set)
-  // This should probably come from the emulator, but for now we'll just set it here.
-  machineState.memSize = set ? 1080 : 128
+export const passSetRamWorks = (size: number) => {
+  doPostMessage(MSG_MAIN.RamWorks, size)
+  // This will also come from the emulator, but set it here so the UI updates.
+  machineState.extraRamSize = size
 }
 
 export const passSetSoftSwitches = (addresses: Array<number> | null) => {
@@ -181,6 +186,7 @@ let machineState: MachineState = {
   canGoBackward: true,
   canGoForward: true,
   capsLock: true,
+  darkMode: false,
   colorMode: COLOR_MODE.COLOR,
   cpuSpeed: 0,
   debugDump: '',
@@ -188,9 +194,9 @@ let machineState: MachineState = {
   helpText: '',
   hires: new Uint8Array(),
   iTempState: 0,
-  isDebugging: false,
+  isDebugging: TEST_DEBUG,
   lores: new Uint8Array(),
-  memSize: 128,
+  extraRamSize: 64,
   memoryDump: new Uint8Array(),
   nextInstruction: '',
   noDelayMode: false,
@@ -212,14 +218,14 @@ export const doOnMessage = (e: MessageEvent): {speed: number, helptext: string} 
       // Force them back to their actual values.
       newState.colorMode = machineState.colorMode
       newState.capsLock = machineState.capsLock
-      newState.memSize = machineState.memSize
+      newState.darkMode = machineState.darkMode
       newState.helpText = machineState.helpText
       machineState = newState
       return {speed: machineState.cpuSpeed, helptext: machineState.helpText}
     }
     case MSG_WORKER.SAVE_STATE: {
-      const saveState = e.data.payload as EmulatorSaveState
-      saveStateCallback(saveState)
+      const sState = e.data.payload as EmulatorSaveState
+      saveStateCallback(sState)
       break
     }
     case MSG_WORKER.CLICK:
@@ -385,14 +391,18 @@ export const handleGetCapsLock = () => {
   return machineState.capsLock
 }
 
-export const handleGetSaveState = (callback: (saveState: EmulatorSaveState) => void,
+export const handleGetDarkMode = () => {
+  return machineState.darkMode
+}
+
+export const handleGetSaveState = (callback: (sState: EmulatorSaveState) => void,
   withSnapshots: boolean) => {
   saveStateCallback = callback
   doPostMessage(withSnapshots ? MSG_MAIN.GET_SAVE_STATE_SNAPSHOTS : MSG_MAIN.GET_SAVE_STATE, true)
 }
 
 export const handleGetMemSize = () => {
-  return machineState.memSize
+  return machineState.extraRamSize
 }
 
 export const handleGetHelpText = () => {

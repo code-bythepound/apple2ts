@@ -8,7 +8,8 @@ import {
   setMain2Worker,
   handleGetMemSize,
   passHelpText,
-  handleGetHelpText
+  handleGetHelpText,
+  handleGetDarkMode,
 } from "./main2worker"
 import Apple2Canvas from "./canvas"
 import ControlPanel from "./controls/controlpanel"
@@ -25,7 +26,6 @@ import { COLORS } from "./emulator/utility/utility";
 
 const DisplayApple2 = () => {
   const [myInit, setMyInit] = useState(false)
-  const [darkMode, setDarkMode] = useState(false)
   const [renderCount, setRenderCount] = useState(0)
   const [currentSpeed, setCurrentSpeed] = useState(1.02)
   const [ctrlKeyMode, setCtrlKeyMode] = useState(0)
@@ -62,10 +62,6 @@ const DisplayApple2 = () => {
     // If you do setRenderCount(renderCount + 1), renderCount will always be
     // zero and NOTHING will update.
     setRenderCount(prevRenderCount => prevRenderCount + 1);
-  }
-
-  const toggleDarkMode = () => {
-    setDarkMode(!darkMode)
   }
 
   if (!myInit) {
@@ -135,8 +131,6 @@ const DisplayApple2 = () => {
     openAppleKeyMode: openAppleKeyMode,
     closedAppleKeyMode: closedAppleKeyMode,
     showFileOpenDialog: showFileOpenDialog,
-    darkMode: darkMode,
-    setDarkMode: toggleDarkMode,
     updateDisplay: updateDisplay,
     handleCtrlDown: handleCtrlDown,
     handleOpenAppleDown: handleOpenAppleDown,
@@ -145,7 +139,7 @@ const DisplayApple2 = () => {
   }
 
   let colors = COLORS.LIGHT
-  if (darkMode) {
+  if (handleGetDarkMode()) {
     colors = COLORS.DARK
   }
   document.body.style.setProperty('--background-color', colors.BG)
@@ -156,6 +150,7 @@ const DisplayApple2 = () => {
   document.body.style.setProperty('--opcode', colors.OPCODE)
   document.body.style.setProperty('--address', colors.ADDRESS)
   document.body.style.setProperty('--immediate', colors.IMMEDIATE)
+  document.body.style.setProperty('--highlight', colors.HIGHLIGHT)
 
   const isTouchDevice = "ontouchstart" in document.documentElement
   const canvasWidth = getCanvasSize()[0]
@@ -166,14 +161,16 @@ const DisplayApple2 = () => {
   const isLandscape = isTouchDevice && (width > height)
   // For narrow we don't need to take into account the canvas width.
   let paperWidth = narrow ? (width) : (width - canvasWidth - 70)
-  paperWidth = Math.min(Math.max(paperWidth, 300), canvasWidth - 20)
+  paperWidth = Math.min(Math.max(paperWidth, 300), canvasWidth)
   if (isTouchDevice) {
-    document.body.style.marginLeft = "2px"
-    document.body.style.marginRight = "2px"
-    document.body.style.marginTop = isLandscape ? "10px" : "2px"
+    document.body.style.marginLeft = "0"
+    document.body.style.marginRight = "0"
+    document.body.style.marginTop = isLandscape ? "10px" : "0"
   }
+  const mem = handleGetMemSize() + 64
+  const memSize = (mem > 1100) ? ((mem / 1024).toFixed() + " MB") : (mem + " KB")
   const status = <div className="default-font statusItem">
-    <span>{props.speed} MHz, {handleGetMemSize()} KB</span>
+    <span>{props.speed} MHz, {memSize}</span>
     <br />
     <span>Apple2TS ©{new Date().getFullYear()} Chris Torrence&nbsp;
       <a href="https://github.com/ct6502/apple2ts/issues">Report an Issue</a></span>
@@ -196,7 +193,7 @@ const DisplayApple2 = () => {
         {narrow && <div className="divider"></div>}
         <span className="flex-column">
           {handleGetIsDebugging() ? <DebugSection /> :
-            <HelpPanel darkMode={darkMode} narrow={narrow}
+            <HelpPanel narrow={narrow}
               helptext={handleGetHelpText()}
               height={paperHeight} width={paperWidth} />}
         </span>

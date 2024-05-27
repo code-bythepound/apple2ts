@@ -114,11 +114,14 @@
 
 .breakpoint-position {
   position: absolute;
-  left: 6px;
-  margin-top: 1px;
+  left: -14px;
+  top: 1px;
 }
 
 .fake-point {
+  position: absolute;
+  left: 6px;
+  top: 0;
   opacity: 50%;
 }
 
@@ -305,6 +308,10 @@ td {
 
 .memtable-readonly {
   background-color: var(--button-active);
+}
+
+.memtable-highlight {
+  background-color: var(--highlight);
 }
 
 .selected {

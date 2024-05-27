@@ -2,8 +2,17 @@ import { KeyboardEvent } from "react"
 
 export const TEST_DEBUG = false
 export const TEST_GRAPHICS = false
-export const MAX_SNAPSHOTS = 60
+export const MAX_SNAPSHOTS = 30
 export const FILE_SUFFIXES = ".a2ts,.hdv,.2mg,.dsk,.woz,.po,.do,.bin"
+
+// Put memory offset constants here so we can use them in the worker and main thread.
+// We used to have these in the memory.ts file, but when we imported that into
+// the main thread, it also created an unnecessary memory buffer array.
+export const ROMpage = 0x100
+export const RamWorksPage = 0x17F
+export const ROMmemoryStart = 256 * ROMpage
+export const RamWorksMemoryStart = 256 * RamWorksPage
+
 export const COLORS = {
   LIGHT: {
     TEXT: '#000000',
@@ -14,6 +23,7 @@ export const COLORS = {
     OPCODE: '#000000',
     ADDRESS: '#006400',
     IMMEDIATE: '#646400',
+    HIGHLIGHT: '#FFFF00',
   },
   DARK: {
     TEXT: '#DDD',
@@ -24,6 +34,7 @@ export const COLORS = {
     OPCODE: '#dcdcaf',
     ADDRESS: '#00C000',
     IMMEDIATE: '#80FF00',
+    HIGHLIGHT: '#966C23',
   }
 }
 
@@ -78,7 +89,7 @@ export enum MSG_MAIN {
   SET_MEMORY,
   COMM_DATA,
   MIDI_DATA,
-  RAMWORKS,
+  RamWorks,
   SOFTSWITCHES,
 }
 

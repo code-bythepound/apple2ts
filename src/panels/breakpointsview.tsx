@@ -14,7 +14,6 @@ import { faCircle as iconBreakpointDisabled } from "@fortawesome/free-regular-sv
 import { getLineOfDisassembly } from "./debugpanelutilities";
 import BreakpointEdit from "./breakpointedit";
 import { Breakpoint, BreakpointMap, getBreakpointString, getBreakpointStyle } from "../emulator/utility/breakpoint";
-import { TEST_DEBUG } from "../emulator/utility/utility";
 import { useGlobalContext } from "../globalcontext";
 
 const BreakpointsView = () => {
@@ -24,7 +23,7 @@ const BreakpointsView = () => {
   const [dialogPosition, setDialogPosition] = useState([x, y])
   const [breakpointEditAddress, setBreakpointEditAddress] = useState(0)
   const [breakpointEditValue, setBreakpointEditValue] = useState(new Breakpoint())
-  const [showBreakpointEdit, setShowBreakpointEdit] = useState(TEST_DEBUG)
+  const [showBreakpointEdit, setShowBreakpointEdit] = useState(false)
 
   const handleAddressClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const addr = parseInt(event.currentTarget.getAttribute('data-key') || '-1')
@@ -109,7 +108,7 @@ const BreakpointsView = () => {
 
   return (
     <div className="round-rect-border short-panel">
-      <div className="bigger-font">Breakpoints</div>
+      <div className="bigger-font column-gap">Breakpoints</div>
       <div className="flex-column">
         <div className="flex-row-space-between">
           &nbsp;

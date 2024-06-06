@@ -87,8 +87,9 @@ const CMD = {
     SUPLD:   0x0f,  // sprite upload
     SCOFF:   0x10,  // clipping screen offset
     SCRECT:  0x11,  // clipping screen rect
+    DEBUG:   0xFC,  // send debug data
     PRESENT: 0xFD,  // present internal representation (dma to screen memory)
-    EXIT:    0xFE,  // early exit
+    EXIT:    0xFE,  // early exit from dma
     CHAIN:   0xFF,  // chain next dma
 }
 
@@ -353,6 +354,15 @@ const ParseCmdBuffer = (): number => {
         dmacLib._cmdScreenRect(x, y, width, height)
       }
       break
+
+      case CMD.DEBUG: {
+        if (FailCmd("debug", 2, brem))
+          return;
+        let x = buffer[pos++]
+        let y = buffer[pos++]
+        dmacLib._cmdDebug(x, y)
+      }
+      break;
 
       case CMD.EXIT:
         return cycles

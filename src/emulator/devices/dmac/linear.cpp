@@ -222,6 +222,9 @@ static const uint8_t BitReverseTable256[256] =
 #   define R4(n) R2(n), R2(n + 2*16), R2(n + 1*16), R2(n + 3*16)
 #   define R6(n) R4(n), R4(n + 2*4 ), R4(n + 1*4 ), R4(n + 3*4 )
     R6(0), R6(2), R6(1), R6(3)
+#   undef R2
+#   undef R4
+#   undef R6
 };
 
 static
@@ -1298,7 +1301,7 @@ cmdSubBlt(uint8_t id, uint16_t destx, uint16_t desty, uint16_t sx, uint16_t sy, 
 // +-------mod---------+
                       
 // uses arrayBuf memory
-EXPORT bool
+EXPORT void
 cmdUploadArray(uint8_t id, uint16_t srcAddr, uint16_t x, uint16_t y, uint16_t mod, uint8_t w, uint8_t h)
 {
   uint8_t *dstLine = arrayBuf;
@@ -1311,11 +1314,9 @@ cmdUploadArray(uint8_t id, uint16_t srcAddr, uint16_t x, uint16_t y, uint16_t mo
     srcLine += mod;
     dstLine += w;
   }
-
-  return true;
 }
 
-bool
+void
 cmdUploadArrayI(uint8_t id, uint8_t * srcAddr, uint16_t x, uint16_t y, uint16_t mod, uint8_t w, uint8_t h)
 {
   uint8_t *dstLine = arrayBuf;
@@ -1328,12 +1329,10 @@ cmdUploadArrayI(uint8_t id, uint8_t * srcAddr, uint16_t x, uint16_t y, uint16_t 
     srcLine += mod;
     dstLine += w;
   }
-
-  return true;
 }
 
 // uses arrayBuf memory
-EXPORT bool
+EXPORT void
 cmdArrayBlt(uint8_t id, uint16_t dx, uint16_t dy, uint16_t w, uint16_t h, uint8_t spoffset, uint8_t mode)
 {
   // read array and begin blitting sprites
@@ -1363,8 +1362,6 @@ cmdArrayBlt(uint8_t id, uint16_t dx, uint16_t dy, uint16_t w, uint16_t h, uint8_
       }
     }
   }
-
-  return true;
 }
 
 #if 0
@@ -1714,6 +1711,14 @@ presentHgr80(uint16_t page, bool mix)
 }
 
 EXPORT void
+cmdDebug(uint8_t x, uint8_t y)
+{
+  cmdUploadArrayI(0, rx::map, x, y, rx::mapWidth, 256/rx::tileWidth, 256/rx::tileHeight);
+  cmdArrayBlt(0, 0, 0, 256/rx::tileWidth, 256/rx::tileHeight, 3, 1);
+  LOG(0,"Array: %d,%d\n", x, y);
+}
+
+EXPORT void
 cmdPresent(uint16_t page)
 {
   LOG(0,"Present %d to page %d\n", videoMode, page);
@@ -1736,11 +1741,11 @@ cmdPresent(uint16_t page)
   }
 #endif
 
-#if 1
+#if 0
   // 15,53
   //cmdUploadArrayI(0, rx::map, 15, 53, rx::mapWidth, 15, 10);
   //cmdArrayBlt(0, 0, 0, 15, 10, 3, 1);
-  cmdUploadArrayI(0, rx::map, 5, 5, rx::mapWidth, 256/rx::tileWidth, 256/rx::tileHeight);
+  cmdUploadArrayI(0, rx::map, 0, 0, rx::mapWidth, 256/rx::tileWidth, 256/rx::tileHeight);
   cmdArrayBlt(0, 0, 0, 256/rx::tileWidth, 256/rx::tileHeight, 3, 1);
 #endif
 

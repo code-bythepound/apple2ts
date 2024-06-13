@@ -1,4 +1,5 @@
-import { handleGetDebugDump } from "../main2worker";
+import { handleGetStackString } from "../main2worker";
+import MemoryMap from "./memorymap";
 import State6502Controls from "./state6502controls";
 
 const DebugInfoPanel = () => {
@@ -11,7 +12,16 @@ const DebugInfoPanel = () => {
           marginTop: '7px',
           overflow: 'auto',
         }}>
-        {handleGetDebugDump()}
+        <div className="flex-row-space-between">
+          <div className="flex-column" style={{ width: '45%' }}>
+            <div className="bigger-font" style={{ marginBottom: '6px' }}>Stack Dump</div>
+            <div className="thinBorder" style={{ padding: '3px', overflow: 'auto', width: '100%', height: '465px' }}>{handleGetStackString()}</div>
+          </div>
+          <div className="flex-column" style={{ width: '45%' }}>
+            <div className="bigger-font" style={{ marginBottom: '6px' }}>Memory Map</div>
+            <MemoryMap />
+          </div>
+        </div>
       </div>
     </div>
   )

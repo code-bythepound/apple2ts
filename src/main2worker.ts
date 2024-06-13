@@ -189,7 +189,7 @@ let machineState: MachineState = {
   darkMode: false,
   colorMode: COLOR_MODE.COLOR,
   cpuSpeed: 0,
-  debugDump: '',
+  stackString: '',
   disassembly: '',
   helpText: '',
   hires: new Uint8Array(),
@@ -197,6 +197,9 @@ let machineState: MachineState = {
   isDebugging: TEST_DEBUG,
   lores: new Uint8Array(),
   extraRamSize: 64,
+  softSwitches: {},
+  c800Slot: 255,
+  ramWorksBank: 0,
   memoryDump: new Uint8Array(),
   nextInstruction: '',
   noDelayMode: false,
@@ -339,8 +342,20 @@ export const handleGetAltCharSet = () => {
   return machineState.altChar
 }
 
-export const handleGetDebugDump = () => {
-  return machineState.debugDump
+export const handleGetStackString = () => {
+  return machineState.stackString
+}
+
+export const handleGetSoftSwitches = () => {
+  return machineState.softSwitches
+}
+
+export const handleGetC800Slot = () => {
+  return machineState.c800Slot
+}
+
+export const handleGetRamWorksBank = () => {
+  return machineState.ramWorksBank
 }
 
 export const handleGetMemoryDump = () => {

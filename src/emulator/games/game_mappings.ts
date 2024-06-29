@@ -1,7 +1,7 @@
 import { matchMemory } from "../memory"
 import { setGamepad0, setGamepad1, setGamepad2, setGamepad3,
   setLeftButtonDown, setPushButton2, setRightButtonDown } from "../devices/joystick"
-import { passHelptext } from "../worker2main"
+import { passHelptext,passEnhancedMidi } from "../worker2main"
 import { aztec } from "./aztec"
 import { drol } from "./drol"
 import { firebug } from "./firebug"
@@ -9,6 +9,7 @@ import { karateka } from "./karateka"
 import { noxarchaist } from "./noxarchaist"
 import { robotron } from "./robotron"
 import { snoggle } from "./snoggle"
+import { ultima5 } from "./ultima5"
 import { wizardry } from "./wizardry"
 import { wolfenstein } from "./wolfenstein"
 
@@ -29,6 +30,7 @@ AddGameLibraryItem(karateka)
 AddGameLibraryItem(noxarchaist)
 AddGameLibraryItem(robotron)
 AddGameLibraryItem(snoggle)
+AddGameLibraryItem(ultima5)
 AddGameLibraryItem(wizardry)
 AddGameLibraryItem(wolfenstein)
 
@@ -88,11 +90,17 @@ export const getGameMapping = () => {
 
 export const handleGameSetup = (reset = false) => {
   for (const game of gameLibrary) {
+    if (game.address === 0x300 && game.data[0] === 0x78) {
+      console.log('ultima5')
+    }
     if (matchMemory(game.address, game.data)) {
       passHelptext(game.helptext ? game.helptext : ' ')
       if (game.setup) game.setup()
       return
     }   
   }
-  if (reset) passHelptext(' ')
+  if (reset) { 
+    passHelptext(' ')
+    passEnhancedMidi(0)
+  }
 }

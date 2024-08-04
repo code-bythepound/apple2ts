@@ -4,6 +4,10 @@ import { getDataBlock, memGet, memSet } from "./memory"
 
 export const s6502: STATE6502 = default6502State()
 
+export const setAccumulator = (value: number) => {
+  s6502.Accum = value
+}
+
 export const setX = (value: number) => {
   s6502.XReg = value
 }
@@ -82,7 +86,7 @@ export const getStackString = () => {
     let value = "$" + toHex(stackvalues[i])
     let cmd = stackDump[i]
     if ((stackDump[i].length > 3) && (i - 1) > s6502.StackPtr) {
-      if (stackDump[i-1] === "JSR" || stackDump[i-1] === "BRK") {
+      if (stackDump[i-1] === "JSR" || stackDump[i-1] === "BRK" || stackDump[i-1] === "IRQ") {
         i--
         value += toHex(stackvalues[i])
       } else {

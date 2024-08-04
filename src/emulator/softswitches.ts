@@ -1,5 +1,5 @@
 import { memGetC000, memSetC000 } from "./memory"
-import { popKey } from "./devices/keyboard"
+import { clearKeyStrobe, popKey } from "./devices/keyboard"
 import { passClickSpeaker } from "./worker2main"
 import { resetJoystick, checkJoystickValues } from "./devices/joystick"
 import { toHex } from "./utility/utility"
@@ -43,17 +43,37 @@ const NewSwitch = (offAddr: number, onAddr: number, isSetAddr: number,
 
 const rand = () => Math.floor(256 * Math.random())
 
-export const handleBankedRAM = (addr: number) => {
+// let prevCount = 0
+
+// Understanding the Apple IIe, Jim Sather, p. 5-23
+// Writing to high RAM is enabled when the HRAMWRT' soft switch is reset.
+// The controlling MPU program must set the PRE-WRITE soft switch before it
+// can reset HRAMWRT'. PRE-WRITE is set by odd read access in the $C08Xrange.
+// It is reset by even read access or any write access in the $C08X range.
+// HRAMWRT' is reset by odd read access in the $C08X range when PRE-WRITE is set.
+// It is set by even access in the $C08X range. Any other type of access
+// causes HRAMWRT' to hold its current state.
+export const handleBankedRAM = (addr: number, calledFromMemSet: boolean) => {
   // Only keep bits 0, 1, 3 of the 0xC08* number
   addr &= 0b1011
-  SWITCHES.READBSR2.isSet = addr === 0
-  SWITCHES.WRITEBSR2.isSet = addr === 1
-  SWITCHES.OFFBSR2.isSet = addr === 2
-  SWITCHES.RDWRBSR2.isSet = addr === 3
-  SWITCHES.READBSR1.isSet = addr === 8
-  SWITCHES.WRITEBSR1.isSet = addr === 9
-  SWITCHES.OFFBSR1.isSet = addr === 0x0A
-  SWITCHES.RDWRBSR1.isSet = addr === 0x0B
+  // These addresses need to be read twice in succession to activate write.
+  if (calledFromMemSet) {
+    SWITCHES.BSR_PREWRITE.isSet = false
+  } else {
+    if (addr & 1) {
+      if (SWITCHES.BSR_PREWRITE.isSet) {
+        // PRE-WRITE is already set, so now we can enable write.
+        SWITCHES.BSR_WRITE.isSet = true
+      } else {
+        // Set PRE-WRITE
+        SWITCHES.BSR_PREWRITE.isSet = true
+      }
+    } else {
+      // Reset PRE-WRITE and HRAMWRT by even read access or any write access in the $C08X range.
+      SWITCHES.BSR_PREWRITE.isSet = false
+      SWITCHES.BSR_WRITE.isSet = false
+    }
+  }
   // Set soft switches for reading the bank-switched RAM status
   SWITCHES.BSRBANK2.isSet = (addr <= 3)
   SWITCHES.BSRREADRAM.isSet = [0, 3, 8, 0x0B].includes(addr)
@@ -69,12 +89,10 @@ export const SWITCHES = {
   SLOTC3ROM: NewSwitch(0xC00A, 0xC00B, 0xC017, true),
   COLUMN80: NewSwitch(0xC00C, 0xC00D, 0xC01F, true),
   ALTCHARSET: NewSwitch(0xC00E, 0xC00F, 0xC01E, true),
-  KBRDSTROBE: NewSwitch(0xC010, 0, 0, false, () => {
-    const keyvalue = memGetC000(0xC000) & 0b01111111
-    memSetC000(0xC000, keyvalue, 32)
-  }),
+  KBRDSTROBE: NewSwitch(0xC010, 0, 0, false),  // we will clear the keystrobe in checkSoftSwitches
   BSRBANK2: NewSwitch(0, 0, 0xC011),    // status location, not a switch
   BSRREADRAM: NewSwitch(0, 0, 0xC012),  // status location, not a switch
+  VBL: NewSwitch(0, 0, 0xC019),  // vertical blanking status location, not a switch
   CASSOUT: NewSwitch(0xC020, 0, 0),  // random value filled in checkSoftSwitches
   SPEAKER: NewSwitch(0xC030, 0, 0, false, (addr, cycleCount) => {
     memSetC000(0xC030, rand())
@@ -112,14 +130,11 @@ export const SWITCHES = {
   }),
   BANKSEL: NewSwitch(0xC073, 0, 0),  // Applied Engineering RamWorks
   LASER128EX: NewSwitch(0xC074, 0, 0),  // used by Total Replay (ignored)
-  READBSR2: NewSwitch(0xC080, 0, 0),
-  WRITEBSR2: NewSwitch(0xC081, 0, 0),
-  OFFBSR2: NewSwitch(0xC082, 0, 0),
-  RDWRBSR2: NewSwitch(0xC083, 0, 0),
-  READBSR1: NewSwitch(0xC088, 0, 0),
-  WRITEBSR1: NewSwitch(0xC089, 0, 0),
-  OFFBSR1: NewSwitch(0xC08A, 0, 0),
-  RDWRBSR1: NewSwitch(0xC08B, 0, 0),
+  // 0xC080...0xC08F are banked RAM soft switches and are handled manually
+  // We don't need entries here, except for our special BSR_PREWRITE and BSR_WRITE.
+  // We will put these in 0xC080 and 0xC088 so they get saved and restored.
+  BSR_PREWRITE: NewSwitch(0xC080, 0, 0),
+  BSR_WRITE: NewSwitch(0xC088, 0, 0),
 }
 
 SWITCHES.TEXT.isSet = true
@@ -134,18 +149,19 @@ export const getSoftSwitchDescriptions = () => {
       const writeOnly = sswitch.writeOnly ? " (write)" : ""
       if (sswitch.offAddr > 0) {
         const addr = toHex(sswitch.offAddr) + ' ' + key
-        SoftSwitchDescriptions[sswitch.offAddr] = addr + (isSwitch ? " off" : "") + writeOnly
+        SoftSwitchDescriptions[sswitch.offAddr] = addr + (isSwitch ? "-OFF" : "") + writeOnly
       }
       if (sswitch.onAddr > 0) {
         const addr = toHex(sswitch.onAddr) + ' ' + key
-          SoftSwitchDescriptions[sswitch.onAddr] = addr + " on" + writeOnly
+          SoftSwitchDescriptions[sswitch.onAddr] = addr + "-ON" + writeOnly
       }
       if (sswitch.isSetAddr > 0) {
         const addr = toHex(sswitch.isSetAddr) + ' ' + key
-        SoftSwitchDescriptions[sswitch.isSetAddr] = addr + " status" + writeOnly
+        SoftSwitchDescriptions[sswitch.isSetAddr] = addr + "-STATUS" + writeOnly
       }
     }
   }
+  SoftSwitchDescriptions[0xC000] = 'C000 KBRD/80STORE-OFF'
   return SoftSwitchDescriptions
 }
 
@@ -161,12 +177,7 @@ export const checkSoftSwitches = (addr: number,
   // and need to call our special function.
   if (addr >= 0xC080 && addr <= 0xC08F) {
     // $C084...87 --> $C080...83, $C08C...8F --> $C088...8B
-    addr -= addr & 4
-    handleBankedRAM(addr)
-    return
-  }
-  if (addr === 0xC000 && !calledFromMemSet) {
-    popKey()
+    handleBankedRAM(addr & ~4, calledFromMemSet)
     return
   }
   const sswitch1 = sswitchArray[addr - 0xC000]
@@ -174,6 +185,15 @@ export const checkSoftSwitches = (addr: number,
     console.error("Unknown softswitch " + toHex(addr))
     memSetC000(addr, rand())
     return
+  }
+  // All addresses from $C000-C00F will read the keyboard and keystrobe
+  if (addr <= 0xC00F) {
+    if (!calledFromMemSet) {
+      popKey()
+    }
+  } else if (addr === 0xC010 || (addr <= 0xC01F && calledFromMemSet)) {
+    // R/W to $C010 or any write to $C011-$C01F will clear the keyboard strobe
+    clearKeyStrobe()
   }
   if (sswitch1.setFunc) {
     sswitch1.setFunc(addr, cycleCount)
@@ -191,12 +211,14 @@ export const checkSoftSwitches = (addr: number,
       }
     }
     if (sswitch1.isSetAddr) {
-      memSetC000(sswitch1.isSetAddr, sswitch1.isSet ? 0x8D : 0x0D)
+      const value = memGetC000(sswitch1.isSetAddr)
+      memSetC000(sswitch1.isSetAddr, sswitch1.isSet ? (value | 0x80) : (value & 0x7F))
     }
     // Many games expect random "noise" from these soft switches.
     if (addr >= 0xC020) memSetC000(addr, rand())
   } else if (addr === sswitch1.isSetAddr) {
-    memSetC000(addr, sswitch1.isSet ? 0x8D : 0x0D)
+    const value = memGetC000(addr)
+    memSetC000(addr, sswitch1.isSet ? (value | 0x80) : (value & 0x7F))
   }
 }
 

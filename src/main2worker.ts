@@ -4,11 +4,12 @@ import { startupTextPage } from "./panels/startuptextpage"
 import { doRumble } from "./devices/gamepad"
 import { playMockingboard } from "./devices/mockingboard_audio"
 import { receiveCommData } from "./devices/serialhub"
-import { receiveMidiData,setEnhancedMidi } from "./devices/midiinterface"
+import { receiveMidiData } from "./devices/midiinterface"
+import { setEnhancedMidi } from "./devices/enhancedmidi"
 import { BreakpointMap } from "./emulator/utility/breakpoint"
 import { doPlayDriveSound } from "./devices/drivesounds"
 import { copyCanvas } from "./copycanvas"
-import { doSetDriveProps } from "./devices/driveprops"
+import { doSetUIDriveProps } from "./devices/driveprops"
 
 let worker: Worker | null = null
 
@@ -236,7 +237,7 @@ export const doOnMessage = (e: MessageEvent): {speed: number, helptext: string} 
       clickSpeaker(e.data.payload as number)
       break
     case MSG_WORKER.DRIVE_PROPS: {
-      doSetDriveProps(e.data.payload as DriveProps)
+      doSetUIDriveProps(e.data.payload as DriveProps)
       return {speed: machineState.cpuSpeed, helptext: ''}
       break
     }

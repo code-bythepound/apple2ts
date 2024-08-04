@@ -3,7 +3,7 @@ import { Buffer } from "buffer"
 import { passMachineState, passRequestThumbnail } from "./worker2main"
 import { s6502, setState6502, reset6502, setCycleCount, setPC, getStackString, getStackDump, setStackDump } from "./instructions"
 import { COLOR_MODE, MAX_SNAPSHOTS, RUN_MODE, RamWorksMemoryStart, TEST_DEBUG } from "./utility/utility"
-import { getDriveSaveState, restoreDriveSaveState, resetDrive, doPauseDrive } from "./devices/drivestate"
+import { getDriveSaveState, restoreDriveSaveState, resetDrive, doPauseDrive, getHardDriveState } from "./devices/drivestate"
 // import { slot_omni } from "./roms/slot_omni_cx00"
 import { SWITCHES, overrideSoftSwitch, resetSoftSwitches, restoreSoftSwitches } from "./softswitches";
 import { memory, memGet, getTextPage, getHires, memoryReset,
@@ -27,6 +27,7 @@ import { enableDiskDrive } from "./devices/diskdata"
 import { resetDMAC, enableDMACCard, onDMACVBL } from "./devices/dmac/dmac"
 import { getDisassembly, getInstruction, verifyAddressWithinDisassembly } from "./utility/disassemble"
 import { sendPastedText } from "./devices/keyboard"
+import { enableHardDrive } from "./devices/harddrivedata"
 
 // dma callback returns the cycle count of cycles that were used
 let dmaCallback: (userdata: any) => number
@@ -59,17 +60,16 @@ let iRefresh = 0
 let takeSnapshot = false
 let iTempState = 0
 const saveStates: Array<EmulatorSaveState> = []
-export let inVBL = false
 
 // methods to capture start and end of VBL for other devices that may need it (mouse)
 const startVBL = (): void => {
-  inVBL = true
+  SWITCHES.VBL.isSet = true
   onMouseVBL()
   onDMACVBL()
 }
 
 const endVBL = (): void => {
-  inVBL = false
+  SWITCHES.VBL.isSet = false
 }
 
 const getSoftSwitches = () => {
@@ -115,11 +115,21 @@ export const setApple2State = (newState: Apple2SaveState, version: number) => {
   const softSwitches: { [name: string]: boolean } = newState.softSwitches
   for (const key in softSwitches) {
     const keyTyped = key as keyof typeof SWITCHES
+    // Our switches have changed slightly over time, so ignore errors.
+    // We will fix up any changed softswitches below.
     try {
-      SWITCHES[keyTyped].isSet = softSwitches[key]    
+      SWITCHES[keyTyped].isSet = softSwitches[key]
     } catch (error) {
       null
     }
+  }
+  // If we have an old save file, we need to set the BSR_WRITE switch
+  // based upon the old bank-switched RAM switches.
+  if ('WRITEBSR1' in softSwitches) {
+    // We didn't have prewrite before, so just make sure it's off.
+    SWITCHES.BSR_PREWRITE.isSet = false
+    SWITCHES.BSR_WRITE.isSet = softSwitches.WRITEBSR1 || softSwitches.WRITEBSR2 ||
+      softSwitches.RDWRBSR1 || softSwitches.RDWRBSR2
   }
   const newmemory = new Uint8Array(Buffer.from(newState.memory, "base64"))
   if (version < 1) {
@@ -246,6 +256,7 @@ const configureMachine = () => {
   enableMockingboard(true, 4)
   enableMouseCard(true, 5)
   enableDiskDrive()
+  enableHardDrive()
 }
 
 const resetMachine = () => {
@@ -268,6 +279,15 @@ const doBoot = () => {
   }
 //  testTiming()
   doReset()
+  handleGameSetup(true)
+  // This is a hack. If we don't currently have a hard drive image on boot,
+  // temporarily disable the hard drive and then re-enable it later.
+  // This allows the floppy disk to boot instead.
+  const ds = getHardDriveState(1)
+  if (ds.filename === '') {
+    enableHardDrive(false)
+    setTimeout(() => { enableHardDrive() }, 200)
+  }
 }
 
 const doReset = () => {
@@ -566,7 +586,7 @@ const doAdvance6502 = () => {
     return;
   }
   if (cpuRunMode === RUN_MODE.NEED_BOOT) {
-    doBoot();
+    doBoot()
     doSetRunMode(RUN_MODE.RUNNING)
   } else if (cpuRunMode === RUN_MODE.NEED_RESET) {
     doReset();
@@ -578,7 +598,8 @@ const doAdvance6502 = () => {
     if (cycles < 0) break
     cycleTotal += cycles;
     if (cycleTotal >= 12480) {
-      if (inVBL === false) {
+      // Return "low" for 70 scan lines out of 262 (70 * 65 cycles = 4550)
+      if (!SWITCHES.VBL.isSet) {
         startVBL()
       }
     }

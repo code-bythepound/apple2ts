@@ -40,7 +40,7 @@ test('readAuxMemEmpty', () => {
   memorySetForTests()
   // AUX read enable
   memSet(0xC003, 1)
-  expect(memGet(0xC013)).toEqual(0x8d);
+  expect(memGet(0xC013)).toEqual(0x80);
   doTestMemory(0, 0x02, 0xBF, () => 0xFF)
   // Pages 0 and 1 should still be from MAIN
   doTestMemory(0, 0, 0x01, expectIndex)
@@ -49,7 +49,7 @@ test('readAuxMemEmpty', () => {
   doTestMemory(0, 0x02, 0xBF, () => 0xFF)
   // MAIN read enable
   memSet(0xC002, 1)
-  expect(memGet(0xC013)).toEqual(0x0d);
+  expect(memGet(0xC013)).toEqual(0);
   // First value in each page of main should have that index
   doTestMemory(0, 0x02, 0xBF, expectIndex)
 })
@@ -88,7 +88,7 @@ test('readWriteAuxMem', () => {
   memoryReset()
   // AUX write enable
   memSet(0xC005, 1)
-  expect(memGet(0xC014)).toEqual(0x8d);
+  expect(memGet(0xC014)).toEqual(0x80);
   doWriteIndexToMemory(0, 0, 0xBF)
   // Should still be reading from MAIN
   doTestMemory(0, 0x02, 0xBF, () => 0xFF)
@@ -97,7 +97,7 @@ test('readWriteAuxMem', () => {
   doTestMemory(0, 0x02, 0xBF, expectIndex)
   // MAIN write enable, and write some values
   memSet(0xC004, 1)
-  expect(memGet(0xC014)).toEqual(0x0d)
+  expect(memGet(0xC014)).toEqual(0)
   doWriteValueToMemory(0, 0, 0xBF, 0xA0)
   // Should still be reading from AUX
   doTestMemory(0, 0x02, 0xBF, expectIndex)
@@ -118,13 +118,15 @@ test('testC800', () => {
   // start with INTCXROM and SLOTC3ROM clear
   memSet(0xC006,0)
   memSet(0xC00A,0)
+  // clear INTC8ROM
+  memGet(0xCFFF)
 
   // check rom
-  expect(memGet(0xC800)).toEqual(0x4C)
- 
-  // reset, should still be internal
-  memGet(0xCFFF)
-  expect(memGet(0xC800)).toEqual(0x4C)
+  const xC800 = memGet(0xC800)
+  const xC801 = memGet(0xC801)
+  const xC802 = memGet(0xC802)
+  const isStillInternalROM = xC800 === 0x4C && xC801 === 0xB0 && xC802 === 0xC9
+  expect(isStillInternalROM).toEqual(false)
 
   // reset, access S2, should switch to S2
   memGet(0xCFFF)
@@ -135,7 +137,7 @@ test('testC800', () => {
   memGet(0xC100)
   expect(memGet(0xC800)).toEqual(0x02)
 
-  // set INTC8ROM by accessing c3/w SLOTC3 off, should immediately switch
+  // set INTC8ROM by accessing c3xx with SLOTC3ROM off, should immediately switch
   memGet(0xC300)
   expect(memGet(0xC800)).toEqual(0x4C)
 
@@ -148,6 +150,10 @@ test('testC800', () => {
   memGet(0xC200)
   expect(memGet(0xC800)).toEqual(0x01)
 
+  // Do a "read", should not switch softswitch
+  memGet(0xC007)
+  expect(memGet(0xC800)).toEqual(0x01)
+
   // TEST INTCXROM SIDE EFFECTS
   // set INTCXROM
   memSet(0xC007,0)
@@ -155,7 +161,8 @@ test('testC800', () => {
   // check rom
   expect(memGet(0xC800)).toEqual(0x4C)
  
-  // reset, should still be internal
+  // reset, should still be internal because our special INTC8ROM was not set,
+  // and therefore INTCXROM is still in control
   memGet(0xCFFF)
   expect(memGet(0xC800)).toEqual(0x4C)
 
@@ -165,12 +172,14 @@ test('testC800', () => {
   expect(memGet(0xC800)).toEqual(0x4c)
 
   // clear INTCXROM
-  memSet(0xC006,0)
+  memSet(0xC006, 0)
 
-  // check rom
-  expect(memGet(0xC800)).toEqual(0x4C)
+  // check rom, should be set to random peripheral ROM because INTC8ROM was not set
+  const isRandomPeripheral = xC800 !== 0x4C && xC800 !== 0x02
+  expect(isRandomPeripheral).toEqual(true)
  
   // reset, access S2, should be S2
+  // now that INTCXROM is off, accessing $CFFF should switch to slot ROM
   memGet(0xCFFF)
   memGet(0xC200)
   expect(memGet(0xC800)).toEqual(0x02)
@@ -205,8 +214,8 @@ test('testC800', () => {
   memSet(0xC00A,0)
   expect(memGet(0xC300)).not.toEqual(0x03)
 
-  // above get should also set INTC8ROM
-  expect(memGet(0xC800)).not.toEqual(0x03)
+  // above get in $C3xx should also set INTC8ROM
+  expect(memGet(0xC800)).toEqual(0x4C)
 
   // access S2, should still be internal
   memGet(0xC200)
@@ -324,4 +333,126 @@ test('test RamWorks Save/Restore', () => {
   expect(memGet(0x00C0)).toEqual(0xFF)
   setApple2State(sState, 1.0)
   expect(memGet(0x00C0)).toEqual(5)
+})
+
+const LOC1 = 0xD17B   // $53 in Apple II/plus/e/enhanced
+const LOC2 = 0xFE1F		// $60 in Apple II/plus/e/enhanced
+
+const setupBSR = () => {
+  memGet(0xC089)  // enable R/W RAM, bank 1
+  memGet(0xC089)  // enable R/W RAM, bank 1
+  memSet(LOC1, 0x11)
+  memSet(LOC2, 0x33)
+  memGet(0xC083)  // enable R/W RAM, bank 2
+  memGet(0xC083)  // enable R/W RAM, bank 2
+  memSet(LOC1, 0x22)
+  memGet(0xC082)  // enable ROM
+}
+
+test('test Bank-Switched-Ram READ ONLY', () => {
+  for (let bank = 1; bank <= 2; bank++) {
+    setupBSR()
+    expect(memGet(LOC1)).toEqual(0x53)
+    expect(memGet(LOC2)).toEqual(0x60)
+    const bankAddr = bank === 1 ? 0xC088 : 0xC080
+    const value = bank === 1 ? 0x11 : 0x22
+    memGet(bankAddr)  // enable Read RAM, bank 1
+    expect(memGet(LOC1)).toEqual(value)
+    expect(memGet(LOC2)).toEqual(0x33)
+    // Should not be able to write at all
+    memGet(bankAddr)  // enable Read RAM, bank 1
+    memSet(LOC1, 0x99)
+    expect(memGet(LOC1)).toEqual(value)
+    expect(memGet(LOC2)).toEqual(0x33)
+  }
+})
+
+test('test Bank-Switched-Ram WRITE ONLY', () => {
+  for (let bank = 1; bank <= 2; bank++) {
+    setupBSR()
+    expect(memGet(LOC1)).toEqual(0x53)
+    expect(memGet(LOC2)).toEqual(0x60)
+    const bankAddr = bank === 1 ? 0xC089 : 0xC081
+    const value = bank === 1 ? 0x11 : 0x22
+    memGet(bankAddr)  // enable pre-write
+    expect(memGet(LOC1)).toEqual(0x53)
+    expect(memGet(LOC2)).toEqual(0x60)
+    // Should not be able to write yet
+    memSet(LOC1, 0x99)
+    expect(memGet(LOC1)).toEqual(0x53)
+    expect(memGet(LOC2)).toEqual(0x60)
+    memGet(bankAddr)  // enable write
+    memSet(LOC1, value + 1)
+    memSet(LOC2, 0x34)
+    // We still can't read
+    expect(memGet(LOC1)).toEqual(0x53)
+    expect(memGet(LOC2)).toEqual(0x60)
+    const bankRead = bank === 1 ? 0xC088 : 0xC080
+    memGet(bankRead)  // enable Read RAM, bank 1
+    expect(memGet(LOC1)).toEqual(value + 1)
+    expect(memGet(LOC2)).toEqual(0x34)
+  }
+})
+
+test('test Bank-Switched-Ram READ/WRITE', () => {
+  for (let bank = 1; bank <= 2; bank++) {
+    setupBSR()
+    expect(memGet(LOC1)).toEqual(0x53)
+    expect(memGet(LOC2)).toEqual(0x60)
+    const bankAddr = bank === 1 ? 0xC08B : 0xC083
+    const value = bank === 1 ? 0x11 : 0x22
+    memGet(bankAddr)  // enable pre-write
+    expect(memGet(LOC1)).toEqual(value)
+    // Should not be able to write yet
+    memSet(LOC1, 0x99)
+    expect(memGet(LOC1)).toEqual(value)
+    memGet(bankAddr)  // enable write
+    memSet(LOC1, value + 2)
+    memSet(LOC2, 0x34)
+    // Should be able to read it right away
+    expect(memGet(LOC1)).toEqual(value + 2)
+    expect(memGet(LOC2)).toEqual(0x34)
+    // A write to $C083/$C08B should reset the PRE-WRITE,
+    // but should still be able to write and read...
+    memSet(bankAddr, 1)
+    memSet(LOC1, value + 3)
+    memSet(LOC2, 0x35)
+    expect(memGet(LOC1)).toEqual(value + 3)
+    expect(memGet(LOC2)).toEqual(0x35)
+  }
+})
+
+test('test Bank-Switched-Ram PRE-WRITE disable', () => {
+  for (let bank = 1; bank <= 2; bank++) {
+    setupBSR()
+    expect(memGet(LOC1)).toEqual(0x53)
+    expect(memGet(LOC2)).toEqual(0x60)
+    const bankAddr = bank === 1 ? 0xC08B : 0xC083
+    const value = bank === 1 ? 0x11 : 0x22
+    memGet(bankAddr)  // enable pre-write
+    expect(memGet(LOC1)).toEqual(value)
+    // Should not be able to write yet
+    memSet(LOC1, 0x99)
+    expect(memGet(LOC1)).toEqual(value)
+
+    // A write to $C083/$C08B should reset the PRE-WRITE to zero.
+    memSet(bankAddr, 1)
+
+    // Should not be able to write
+    memSet(LOC1, 0x99)
+    expect(memGet(LOC1)).toEqual(value)
+
+    memGet(bankAddr)  // enable pre-write
+
+    // Should STILL not be able to write
+    memSet(LOC1, 0x99)
+    expect(memGet(LOC1)).toEqual(value)
+
+    // Finally, should be able to write!
+    memGet(bankAddr)
+    memSet(LOC1, value + 1)
+    memSet(LOC2, 0x34)
+    expect(memGet(LOC1)).toEqual(value + 1)
+    expect(memGet(LOC2)).toEqual(0x34)
+  }
 })

@@ -6,21 +6,17 @@ const MemoryMap = () => {
   const switches = handleGetSoftSwitches()
   if (Object.keys(switches).length <= 1) return (<div></div>)
   const altZP = switches.ALTZP
-  const bank2 = switches.BSRBANK2
-  const bsrRead = switches.BSRREADRAM
-  const bsrWrite = switches.WRITEBSR1 || switches.WRITEBSR2 ||
-    switches.RDWRBSR1 || switches.RDWRBSR2
   let bankSwitchedRam = 'ROM'
   let bankD000 = 'ROM'
   let classBSR = 'mem-rom'
-  if (bsrRead || bsrWrite) {
+  if (switches.BSRREADRAM || switches.BSR_WRITE) {
     classBSR = altZP ? 'mem-aux' : ''
-    if (bsrRead && bsrWrite) {
+    if (switches.BSRREADRAM && switches.BSR_WRITE) {
       bankSwitchedRam = 'R/W RAM'
     } else {
-      bankSwitchedRam = bsrRead ? 'Read RAM' : 'Read ROM\nWrite RAM'
+      bankSwitchedRam = switches.BSRREADRAM ? 'Read RAM' : 'Read ROM\nWrite RAM'
     }
-    bankD000 = bankSwitchedRam + '\nBank ' + (bank2 ? '2' : '1')
+    bankD000 = bankSwitchedRam + '\nBank ' + (switches.BSRBANK2 ? '2' : '1')
   }
   const auxRead = switches.RAMRD
   const auxWrite = switches.RAMWRT
@@ -37,8 +33,10 @@ const MemoryMap = () => {
   const internalCxRom = switches.INTCXROM
   // Are we still hooked up to the internal ROM for C300?
   const internalC3Rom = switches.INTCXROM || (!switches.SLOTC3ROM)
-  // 255 is our flag for no slot selected, so just wrap it back around to 0
-  const c800Slot = internalCxRom ? 0 : (handleGetC800Slot() % 255)
+  // 255 is our flag for internal C8ROM
+  const c800Slot = internalCxRom ? 255 : handleGetC800Slot()
+  const c800SlotText = (c800Slot < 255) ?
+    (c800Slot > 0 ? `Slot ${c800Slot}` : 'Peripheral') : "Internal ROM"
 
   return (
     <div>
@@ -66,13 +64,13 @@ const MemoryMap = () => {
             <td>$4000</td><td className={isAux ? "mem-aux" : ""}></td>
           </tr>
           <tr>
-            <td>$C100<br />$C7FF</td><td className={internalCxRom ? "mem-rom" : ""}>{internalCxRom ? "Internal ROM" : "Peripheral ROM"}</td>
+            <td>$C100<br />$C7FF</td><td className={internalCxRom ? "mem-rom" : ""}>{internalCxRom ? "Internal ROM" : "Peripheral"}</td>
           </tr>
           <tr>
             <td>$C300</td><td className={internalC3Rom ? "mem-rom" : ""}>{internalC3Rom ? "Internal ROM" : "Peripheral ROM"}</td>
           </tr>
           <tr>
-            <td>$C800</td><td className={c800Slot ? "" : "mem-rom"}>{c800Slot ? `Slot ${c800Slot}` : "Internal ROM"}</td>
+            <td>$C800</td><td className={(c800Slot === 255) ? "mem-rom" : ""}>{c800SlotText}</td>
           </tr>
           <tr>
             <td>$D000</td><td className={classBSR}>{bankD000}</td>

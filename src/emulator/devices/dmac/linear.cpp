@@ -420,7 +420,7 @@ inline void ROP(uint8_t *fb, uint8_t sp)
 inline void spriteROP(uint8_t *fb, uint8_t sp)
 {
   // first check high bit transparency
-  if (sp > 0x7f)
+  if (sp > 0x0f)
     return;
 
   return ROP(fb, palette(sp));
@@ -1961,10 +1961,12 @@ EXPORT void Init(uint32_t dmaByteOutPtr, uint32_t dmaByteInPtr)
   DMAByteOut = reinterpret_cast<void (*)(uint32_t, uint32_t)>(dmaByteOutPtr);
   DMAByteIn  = reinterpret_cast<uint32_t (*)(uint32_t)>(dmaByteInPtr);
 
-
+#if 0
   uint8_t id = 0;
   uint32_t mem;
   SpriteHeader * sprite = nullptr;
+#endif
+
 #if 0
   id++;
   AllocSprite(id, 20,20);
@@ -1991,6 +1993,7 @@ EXPORT void Init(uint32_t dmaByteOutPtr, uint32_t dmaByteInPtr)
   memcpy(sprite->data, BearBits2, 20*20);
 #endif
 
+#if 0
   id++;
   AllocSprite(id, 18,21);
   LOG(1,"default sprite3: %d\n", id);
@@ -2017,6 +2020,7 @@ EXPORT void Init(uint32_t dmaByteOutPtr, uint32_t dmaByteInPtr)
 
   id++;
   setupRallyX(id);
+#endif
 
   createFont();
 }

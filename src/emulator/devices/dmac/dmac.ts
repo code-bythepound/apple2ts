@@ -11,6 +11,7 @@ let dmacLib;
 let dmaByteOutPtr = 0;
 let dmaByteInPtr = 0;
 let Loaded = false;
+let Inited = false;
 
 const DMAByteOut = (addr: number, value: number) => {
   memSet(addr, value)
@@ -37,13 +38,6 @@ export const enableDMACCard = (enable = true, aslot = 3) => {
     return
 
   slot = aslot
-
-  if (Loaded) {
-    dmacLib._Init(dmaByteOutPtr, dmaByteInPtr);
-    console.log("Loaded..");
-  } else {
-    console.log("NOT LOADED..");
-  }
 
   setSlotIOCallback(slot, handleDMACIO)
 }
@@ -391,6 +385,18 @@ const ParseCmdBuffer = (): number => {
 let rmod = 256
 let config = 0
 const SetConfig = (value : number) => {
+
+  if (Loaded) {
+    if (Inited === false) {
+      dmacLib._Init(dmaByteOutPtr, dmaByteInPtr);
+      console.log("Loaded..");
+      Inited = true;
+    }
+  } else {
+    console.log("ERROR - DMACLib NOT LOADED..");
+    return;
+  }
+
   config = value
   dmacLib._cmdSetMode(config&0xf, 1)
 }

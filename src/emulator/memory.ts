@@ -366,7 +366,7 @@ export const readWriteAuxMem = (addr: number, write = false) => {
   return useAux
 }
 
-const memGetSoftSwitch = (addr: number): number => {
+export const memGetSoftSwitch = (addr: number): number => {
   if (addr >= 0xC090) {
     checkSlotIO(addr)
   } else {

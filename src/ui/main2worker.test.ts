@@ -18,9 +18,21 @@ import {
   requestSessionMemoryComparison,
   requestRestoreSessionSnapshot,
   setExecutionStateCallback,
+  handleGetVeraFrame,
   requestWriteMemory,
   setMain2Worker,
 } from "./main2worker"
+
+test("worker message IDs are unique", () => {
+  const ids = Object.values(MSG_WORKER).filter((value): value is number => typeof value === "number")
+  expect(new Set(ids).size).toBe(ids.length)
+})
+
+test("routes a VERA frame to the VERA display state", () => {
+  const frame = {dcVideo: 0xF1, sequence: 17}
+  doOnMessage({data: {msg: MSG_WORKER.VERA_FRAME, payload: frame}} as MessageEvent)
+  expect(handleGetVeraFrame()).toBe(frame)
+})
 
 jest.mock("./panels/disassembly/disassembly_utilities", () => ({
   set6502Instructions: jest.fn(),

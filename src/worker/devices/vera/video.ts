@@ -831,6 +831,19 @@ const render_layer_line_bitmap = (layer: number, y: number): void => {
 	const yy: number = y % props.tileh
 	// additional bytes to reach the correct line of the tile
 	const y_add: number = (yy * props.tilew * props.bits_per_pixel) >> 3
+	// 8-bit bitmap pixels are already palette indices; copy wrapped VRAM spans.
+	if (props.bits_per_pixel === 8 && (reg_layer[layer][4] & 0xf) === 0) {
+		const dest = layer_line[layer]
+		let x = 0
+		while (x < SCREEN_WIDTH) {
+			const xx = x % props.tilew
+			const address = (props.tile_base + y_add + xx) & 0x1ffff
+			const count = Math.min(SCREEN_WIDTH - x, props.tilew - xx, 0x20000 - address)
+			dest.set(video_ram.subarray(address, address + count), x)
+			x += count
+		}
+		return
+	}
 	// Render tile line.
 	for (let x: number = 0; x < SCREEN_WIDTH; x++) {
 		const xx: number = x % props.tilew

@@ -5,7 +5,9 @@ import { getMouseButtonReleaseEvents } from "../../mouseevent"
 
 const VeraTab = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const diagnosticsRef = useRef<HTMLDivElement>(null)
   const lastSequenceRef = useRef<number | null>(null)
+  const canvasUploadsRef = useRef(0)
   const [withinScreen, setWithinScreen] = useState(false)
   const [viewSize, setViewSize] = useState<"320" | "640">(() => {
     try {
@@ -155,7 +157,20 @@ const VeraTab = () => {
           } else {
             const imgData = new ImageData(veraFrame.fb, 640, 480)
             ctx.putImageData(imgData, 0, 0)
+            canvasUploadsRef.current++
           }
+        }
+      }
+
+      const diagnostics = diagnosticsRef.current
+      if (diagnostics) {
+        if (!veraFrame) {
+          diagnostics.textContent = "VERA pipeline: no worker frames received"
+        } else {
+          const dcVideo = veraFrame.dcVideo.toString(16).padStart(2, "0").toUpperCase()
+          const output = (veraFrame.dcVideo & 3) === 0 ? "output disabled" : "output active"
+          const framebuffer = veraFrame.fb ? "framebuffer received" : "no framebuffer"
+          diagnostics.textContent = `VERA pipeline: frame ${veraFrame.sequence} · DC_VIDEO $${dcVideo} (${output}) · ${framebuffer} · canvas uploads ${canvasUploadsRef.current}`
         }
       }
 
@@ -256,6 +271,11 @@ const VeraTab = () => {
           640×480 (2x)
         </button>
       </div>
+      <div
+        ref={diagnosticsRef}
+        data-testid="vera-pipeline-status"
+        style={{ paddingLeft: "4px", fontFamily: "monospace", fontSize: "11px", color: "#666" }}
+      />
     </div>
   )
 }

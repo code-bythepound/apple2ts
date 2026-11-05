@@ -676,6 +676,10 @@ export const doOnMessage = (e: MessageEvent): {speed: number, helptext: string} 
       latestVeraFrame = e.data.payload as VeraUiFrame
       break
     }
+    case MSG_WORKER.VERA_TRACE: {
+      latestVeraTrace = e.data.payload as VeraPipelineTrace
+      break
+    }
     case MSG_WORKER.ERRORMSG: {
       const errorMsg = e.data.payload as ErrorMsg
       setDialogMessageContext({
@@ -705,9 +709,14 @@ export type VeraUiFrame = {
 }
 
 let latestVeraFrame: VeraUiFrame | null = null
+let latestVeraTrace: VeraPipelineTrace | null = null
 
 export const handleGetVeraFrame = () => {
   return latestVeraFrame
+}
+
+export const handleGetVeraTrace = () => {
+  return latestVeraTrace
 }
 
 export const handleGetShowAppleMouse = () => {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { handleGetVeraFrame, handleGetShowAppleMouse, passMouseEvent } from "../../main2worker"
+import { handleGetVeraFrame, handleGetVeraTrace, handleGetShowAppleMouse, passMouseEvent } from "../../main2worker"
 import { MouseEventSimple } from "../../../common/utility"
 import { getMouseButtonReleaseEvents } from "../../mouseevent"
 
@@ -97,6 +97,7 @@ const VeraTab = () => {
 
     const render = () => {
       const veraFrame = handleGetVeraFrame()
+      const veraTrace = handleGetVeraTrace()
       const canvas = canvasRef.current
       const sequence = veraFrame?.sequence ?? -1
 
@@ -165,7 +166,12 @@ const VeraTab = () => {
       const diagnostics = diagnosticsRef.current
       if (diagnostics) {
         if (!veraFrame) {
-          diagnostics.textContent = "VERA pipeline: no worker frames received"
+          if (!veraTrace) {
+            diagnostics.textContent = "VERA pipeline: card not initialized; no worker trace or frames received"
+          } else {
+            const dcVideo = veraTrace.dcVideo.toString(16).padStart(2, "0").toUpperCase()
+            diagnostics.textContent = `VERA pipeline: slot ${veraTrace.slot} · ${veraTrace.reason} · callbacks ${veraTrace.callbackCount} · syncs ${veraTrace.syncCount} · completed frames ${veraTrace.completedFrames} · I/O ${veraTrace.ioCount} · cycles ${veraTrace.currentCycle}→${veraTrace.nextSyncCycle} · DC_VIDEO $${dcVideo} · no worker frames received`
+          }
         } else {
           const dcVideo = veraFrame.dcVideo.toString(16).padStart(2, "0").toUpperCase()
           const output = (veraFrame.dcVideo & 3) === 0 ? "output disabled" : "output active"

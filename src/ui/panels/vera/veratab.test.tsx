@@ -24,6 +24,7 @@ jest.mock("../../main2worker", () => ({
     dcVideo: 3,
     sequence: 1,
   })),
+  handleGetVeraTrace: jest.fn(() => null),
   handleGetShowAppleMouse: jest.fn(() => true),
   passMouseEvent: jest.fn(),
 }))

@@ -78,10 +78,6 @@ export const passVeraFramebuffer = (fb: Uint8ClampedArray<ArrayBuffer>, dcVideo:
   }
 }
 
-export const passVeraTrace = (trace: VeraPipelineTrace) => {
-  doPostMessage(MSG_WORKER.VERA_TRACE, trace)
-}
-
 export const passErrorMsg = (event: ErrorMsg) => {
   doPostMessage(MSG_WORKER.ERRORMSG, event)
 }

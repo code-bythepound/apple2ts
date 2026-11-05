@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from "react"
-import { handleGetVeraFrame, handleGetVeraTrace, handleGetShowAppleMouse, passMouseEvent } from "../../main2worker"
+import { handleGetVeraFrame, handleGetShowAppleMouse, passMouseEvent } from "../../main2worker"
 import { MouseEventSimple } from "../../../common/utility"
 import { getMouseButtonReleaseEvents } from "../../mouseevent"
 
 const VeraTab = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const diagnosticsRef = useRef<HTMLDivElement>(null)
   const lastSequenceRef = useRef<number | null>(null)
-  const canvasUploadsRef = useRef(0)
   const [withinScreen, setWithinScreen] = useState(false)
   const [viewSize, setViewSize] = useState<"320" | "640">(() => {
     try {
@@ -97,7 +95,6 @@ const VeraTab = () => {
 
     const render = () => {
       const veraFrame = handleGetVeraFrame()
-      const veraTrace = handleGetVeraTrace()
       const canvas = canvasRef.current
       const sequence = veraFrame?.sequence ?? -1
 
@@ -158,25 +155,7 @@ const VeraTab = () => {
           } else {
             const imgData = new ImageData(veraFrame.fb, 640, 480)
             ctx.putImageData(imgData, 0, 0)
-            canvasUploadsRef.current++
           }
-        }
-      }
-
-      const diagnostics = diagnosticsRef.current
-      if (diagnostics) {
-        if (!veraFrame) {
-          if (!veraTrace) {
-            diagnostics.textContent = "VERA pipeline: card not initialized; no worker trace or frames received"
-          } else {
-            const dcVideo = veraTrace.dcVideo.toString(16).padStart(2, "0").toUpperCase()
-            diagnostics.textContent = `VERA pipeline: slot ${veraTrace.slot} · ${veraTrace.reason} · callbacks ${veraTrace.callbackCount} · syncs ${veraTrace.syncCount} · completed frames ${veraTrace.completedFrames} · I/O ${veraTrace.ioCount} · cycles ${veraTrace.currentCycle}→${veraTrace.nextSyncCycle} · DC_VIDEO $${dcVideo} · no worker frames received`
-          }
-        } else {
-          const dcVideo = veraFrame.dcVideo.toString(16).padStart(2, "0").toUpperCase()
-          const output = (veraFrame.dcVideo & 3) === 0 ? "output disabled" : "output active"
-          const framebuffer = veraFrame.fb ? "framebuffer received" : "no framebuffer"
-          diagnostics.textContent = `VERA pipeline: frame ${veraFrame.sequence} · DC_VIDEO $${dcVideo} (${output}) · ${framebuffer} · canvas uploads ${canvasUploadsRef.current}`
         }
       }
 
@@ -277,11 +256,6 @@ const VeraTab = () => {
           640×480 (2x)
         </button>
       </div>
-      <div
-        ref={diagnosticsRef}
-        data-testid="vera-pipeline-status"
-        style={{ paddingLeft: "4px", fontFamily: "monospace", fontSize: "11px", color: "#666" }}
-      />
     </div>
   )
 }

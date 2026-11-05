@@ -4,9 +4,9 @@
 import { interruptRequest, registerCycleCountCallback } from "../../cpu6502"
 import { s6502 } from "../../instructions"
 import { setSlotIOCallback } from "../../memory"
-import { passVeraFmReset, passVeraFmWrite, passVeraTrace } from "../../worker2main"
+import { passVeraFmReset, passVeraFmWrite } from "../../worker2main"
 import { getCpuCyclesPerRefresh } from "../../motherboard"
-import { video_cycles_until_next_event, video_get_dc_video, video_init, video_step, video_update, video_reset, video_read, video_write, video_get_irq_out } from "./video"
+import { video_cycles_until_next_event, video_init, video_step, video_update, video_reset, video_read, video_write, video_get_irq_out } from "./video"
 import { vera_spi_init, vera_spi_step, sdcard_select } from "./sdcard"
 
 let slot: number = 5
@@ -15,27 +15,6 @@ let prevCycleCount = 0
 let nextSyncCycle = 0
 let ymBusyUntil = 0
 let fmEnabled = true
-let callbackCount = 0
-let syncCount = 0
-let completedFrames = 0
-let ioCount = 0
-let lastCycleDelta = 0
-
-const passPipelineTrace = (reason: VeraPipelineTrace["reason"]) => {
-  passVeraTrace({
-    reason,
-    slot,
-    callbackCount,
-    syncCount,
-    completedFrames,
-    ioCount,
-    currentCycle: s6502.cycleCount,
-    previousCycle: prevCycleCount,
-    nextSyncCycle,
-    lastCycleDelta,
-    dcVideo: video_get_dc_video(),
-  })
-}
 export const setVeraFmEnabled = (enabled: boolean) => {
   fmEnabled = enabled
   ymBusyUntil = 0
@@ -73,19 +52,12 @@ export const syncVera = (): void => {
   }
   if (cycleDelta === 0) return
 
-  lastCycleDelta = cycleDelta
-  syncCount++
   const newFrame = video_step(1, cycleDelta, false)
   vera_spi_step(cycleDelta)
-  if (newFrame) {
-    completedFrames++
-    video_update()
-  }
+  if (newFrame) video_update()
   interrupt(video_get_irq_out())
   prevCycleCount = s6502.cycleCount
   scheduleNextSync()
-  if (newFrame && (completedFrames <= 4 || completedFrames % 60 === 0)) passPipelineTrace("frame")
-  else if (syncCount === 1) passPipelineTrace("sync")
 }
 
 export const initVera = () => {
@@ -117,31 +89,21 @@ export const enableVera = (enable = true, aslot = 3) => {
     return
 
   slot = aslot
-  callbackCount = 0
-  syncCount = 0
-  completedFrames = 0
-  ioCount = 0
-  lastCycleDelta = 0
   prevCycleCount = s6502.cycleCount
   scheduleNextSync()
 
   // this card has no ROM, but has registers in the ROM area
   setSlotIOCallback(slot, handleVeraIO)
   registerCycleCountCallback(cycleCountCallback, slot)
-  passPipelineTrace("enabled")
 }
 
 const cycleCountCallback = (_slot: number) => {
   void _slot
-  callbackCount++
-  if (callbackCount === 1 || (completedFrames === 0 && callbackCount % 65536 === 0)) passPipelineTrace("callback")
   if (s6502.cycleCount >= prevCycleCount && s6502.cycleCount < nextSyncCycle) return
   syncVera()
 }
 
 const handleVeraIO = (addr: number, val = -1): number => {
-  ioCount++
-  if (ioCount === 1) passPipelineTrace("io")
   const ymBase = 0xC080 + slot * 0x10
   if (addr === ymBase || addr === ymBase + 1) {
     if (!fmEnabled) return 0xff

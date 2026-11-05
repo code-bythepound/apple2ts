@@ -60,7 +60,6 @@ export enum MSG_WORKER {
   OPERATION_RESULT,
   VERA_SD_STATUS,
   VERA_SD_IMAGE_DATA,
-  VERA_TRACE,
 }
 
 export interface VeraSdStatus {

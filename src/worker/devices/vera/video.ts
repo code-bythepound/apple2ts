@@ -1319,8 +1319,6 @@ export const video_cycles_until_next_event = (): number => {
 	return cycles
 }
 
-export const video_get_dc_video = (): number => reg_composer[0]
-
 export const video_get_irq_out = (): boolean => {
 	if (pcm_read_rate() !== 0) audio_render()
 	const tmp_isr: number = isr | (pcm_is_fifo_almost_empty() ? 8 : 0)

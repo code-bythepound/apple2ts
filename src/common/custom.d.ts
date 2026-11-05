@@ -180,20 +180,6 @@ type VeraFmWrite = {
   value: number
 }
 
-type VeraPipelineTrace = {
-  reason: "enabled" | "io" | "callback" | "sync" | "frame",
-  slot: number,
-  callbackCount: number,
-  syncCount: number,
-  completedFrames: number,
-  ioCount: number,
-  currentCycle: number,
-  previousCycle: number,
-  nextSyncCycle: number,
-  lastCycleDelta: number,
-  dcVideo: number,
-}
-
 interface PCodeFunc {
   (valueLo: number, valueHi: number): number;
 }

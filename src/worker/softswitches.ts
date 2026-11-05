@@ -4,6 +4,7 @@ import { passClickSpeaker } from "./worker2main"
 import { resetJoystick, checkJoystickValues, checkPushButtonValues } from "./devices/joystick"
 import { s6502 } from "./instructions"
 import { toHex } from "../common/utility"
+import { checkSnesJoyportValue, getSnesJoyport, handleSnesJoyportAnnunciators, resetSnesJoyport } from "./devices/snes_joyport"
 
 
 type tSetFunc = ((addr: number, cycleCount: number) => void) | null
@@ -129,7 +130,10 @@ export const SWITCHES = {
   AN2: NewSwitch(0xC05C, 0xC05D, 0),  // random value filled in checkSoftSwitches
   // Watch out - the addresses are in reverse order - $C05E is AN3 "off" but double hires "on"
   DHIRES: NewSwitch(0xC05F, 0xC05E, 0),
-  CASSIN1: NewSwitch(0, 0, 0xC060, false, () => {memSetC000(0xC060, rand())}),
+  CASSIN1: NewSwitch(0, 0, 0xC060, false, (addr) => {
+    if (getSnesJoyport()) checkSnesJoyportValue(addr)
+    else memSetC000(addr, rand())
+  }),
   PB0: NewSwitch(0, 0, 0xC061, false, (addr) => {checkPushButtonValues(addr, rand())}),
   PB1: NewSwitch(0, 0, 0xC062, false, (addr) => {checkPushButtonValues(addr, rand())}),
   PB2: NewSwitch(0, 0, 0xC063, false, (addr) => {checkPushButtonValues(addr, rand())}),
@@ -315,6 +319,9 @@ export const checkSoftSwitches = (addr: number,
       } else {
         sswitch1.isSet = (addr === sswitch1.onAddr)
       }
+      if (sswitch1 === SWITCHES.AN0 || sswitch1 === SWITCHES.AN1) {
+        handleSnesJoyportAnnunciators(SWITCHES.AN0.isSet, SWITCHES.AN1.isSet)
+      }
     }
     if (sswitch1.isSetAddr) {
       const value = memGetC000(sswitch1.isSetAddr)
@@ -353,8 +360,8 @@ export const resetSoftSwitches = () => {
     // to its new state when the Memory Dump panel is changed to a non-HGR bank.
     if (overriddenSwitches[SWITCHES[keyTyped].offAddr - 0xC000] !== undefined) {
       overriddenSwitches[SWITCHES[keyTyped].offAddr - 0xC000] = false
-    } else {
-      SWITCHES[keyTyped].isSet = false
+      } else {
+        SWITCHES[keyTyped].isSet = false
     }
   }
   if (overriddenSwitches[SWITCHES.TEXT.offAddr - 0xC000] !== undefined) {
@@ -362,6 +369,7 @@ export const resetSoftSwitches = () => {
   } else {
     SWITCHES.TEXT.isSet = true
   }
+  resetSnesJoyport()
 }
 
 // An array of the original state of the soft switches, indexed by offAddress - 0xC000.

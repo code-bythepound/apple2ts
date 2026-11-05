@@ -39,6 +39,7 @@ import { setTraceSettings } from "./tracelog"
 import { getMemoryDump } from "./memory"
 import { doGotoTimeTravelIndex, doSetThumbnailImage, doGetSaveStateWithSnapshots, doGetSaveState, doGoBackInTime, doGoForwardInTime, doRestoreSaveState } from "./save_restore"
 import { setSiriusJoyport } from "./devices/sirius_joyport"
+import { setSnesJoyport } from "./devices/snes_joyport"
 
 // This file must have worker types, but not DOM types.
 // The global should be that of a dedicated worker.
@@ -487,6 +488,9 @@ if (typeof self !== "undefined") {
         break
       case MSG_MAIN.SIRIUS_JOYPORT:
         setSiriusJoyport(e.data.payload)
+        break
+      case MSG_MAIN.SNES_JOYPORT:
+        setSnesJoyport(e.data.payload)
         break
       case MSG_MAIN.EXECUTE_BASIC_COMMAND: {
         const command = e.data.payload as string

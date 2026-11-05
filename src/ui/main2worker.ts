@@ -389,6 +389,10 @@ export const passSiriusJoyport = (mode: boolean) => {
   doPostMessage(MSG_MAIN.SIRIUS_JOYPORT, mode)
 }
 
+export const passSnesJoyport = (mode: boolean) => {
+  doPostMessage(MSG_MAIN.SNES_JOYPORT, mode)
+}
+
 export const passSetTracing = (tracing: boolean) => {
   doPostMessage(MSG_MAIN.TRACING, tracing)
   // Force the state right away, so the UI can update.

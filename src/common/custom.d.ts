@@ -354,6 +354,7 @@ type UIState = {
   reverseYAxis: boolean,
   showScanlines: boolean,
   siriusJoyport: boolean,
+  snesJoyport: boolean,
   tabView: number,
   theme: UI_THEME,
   tiltSensorJoystick: boolean,

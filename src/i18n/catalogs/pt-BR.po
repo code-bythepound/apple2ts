@@ -3061,3 +3061,7 @@ msgstr ""
 msgctxt "retroControl.exportFailed"
 msgid "Export to HDV failed: {{message}}"
 msgstr ""
+
+msgctxt "gamepad.snesJoyport"
+msgid "SNES Gamepad Mode"
+msgstr ""

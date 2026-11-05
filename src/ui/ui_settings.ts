@@ -22,6 +22,7 @@ const initialUIState: Readonly<UIState> = Object.freeze({
   reverseYAxis: false,
   showScanlines: false,
   siriusJoyport: false,
+  snesJoyport: false,
   tabView: 0,
   theme: UI_THEME.CLASSIC,
   tiltSensorJoystick: false,

@@ -2,7 +2,7 @@ import { BreakpointMap, BreakpointNew } from "../common/breakpoint"
 import { TraceSettingsDefault } from "../common/util_disassemble"
 import { COLOR_MODE, DEFAULT_SLOT_CONFIG, MONITOR_MODE, UI_THEME, UI_THEMES } from "../common/utility"
 import { changeMockingboardMode } from "./devices/audio/mockingboard_audio"
-import { passBreakpoints, passReverseYAxis, passSetMachineName, passSetRamWorks, passSetShowDebugTab, passSetSlotConfig, passSetTraceSettings, passSetVeraSlot, passSiriusJoyport, passSpeedMode, requestSpeedMode, } from "./main2worker"
+import { passBreakpoints, passReverseYAxis, passSetMachineName, passSetRamWorks, passSetShowDebugTab, passSetSlotConfig, passSetTraceSettings, passSetVeraSlot, passSiriusJoyport, passSnesJoyport, passSpeedMode, requestSpeedMode, } from "./main2worker"
 import { getTheme, getUIState, initialBooleanUIKeys, setColorMode, setTheme, setUIStateBoolean, BooleanKeyOf, setMonitorMode, isDefaultTrueBooleanKey } from "./ui_settings"
 import { notifySettingsChanged, type SettingsChangeOrigin } from "./settingschange"
 import { toggleScanlines } from "./ui_utilities"
@@ -24,6 +24,7 @@ const booleanControlIds: Partial<Record<BooleanKeyOf<UIState>, string>> = {
   reverseYAxis: "keyboard.joystick.reverseYAxis",
   showScanlines: "display.scanlines",
   siriusJoyport: "keyboard.joystick.siriusJoyport",
+  snesJoyport: "keyboard.joystick.snesJoyport",
   touchJoystick: "keyboard.joystick.touchJoystick",
   useOpenAppleKey: "keyboard.openApple",
 }
@@ -107,9 +108,26 @@ export const setPreferenceBoolean = (
   setUIStateBoolean(key as BooleanKeyOf<UIState>, value)
   if (key === "debugMode") passSetShowDebugTab(value)
   if (key === "reverseYAxis") passReverseYAxis(value)
-  if (key === "siriusJoyport") passSiriusJoyport(value)
-    const controlId = booleanControlIds[key]
-  if (controlId) notifySettingsChanged([controlId], origin)
+  const changedControlIds = [booleanControlIds[key]].filter((id): id is string => Boolean(id))
+  if (key === "siriusJoyport") {
+    passSiriusJoyport(value)
+    if (value) {
+      localStorage.removeItem("snesJoyport")
+      setUIStateBoolean("snesJoyport", false)
+      passSnesJoyport(false)
+      changedControlIds.push("keyboard.joystick.snesJoyport")
+    }
+  }
+  if (key === "snesJoyport") {
+    passSnesJoyport(value)
+    if (value) {
+      localStorage.removeItem("siriusJoyport")
+      setUIStateBoolean("siriusJoyport", false)
+      passSiriusJoyport(false)
+      changedControlIds.push("keyboard.joystick.siriusJoyport")
+    }
+  }
+  if (changedControlIds.length) notifySettingsChanged(changedControlIds, origin)
 }
 
 export const getPreferenceBoolean = (key: BooleanKeys): boolean => {
@@ -460,7 +478,12 @@ export const loadPreferences = () => {
   if (getUIState().reverseYAxis) {
     passReverseYAxis(true)
   }
-  if (getUIState().siriusJoyport) {
+  if (getUIState().snesJoyport) {
+    localStorage.removeItem("siriusJoyport")
+    setUIStateBoolean("siriusJoyport", false)
+    passSiriusJoyport(false)
+    passSnesJoyport(true)
+  } else if (getUIState().siriusJoyport) {
     passSiriusJoyport(true)
   }
 
@@ -562,6 +585,7 @@ export const resetPreferences = (origin: SettingsChangeOrigin = "external") => {
   // Extra processing for certain boolean prefs
   passReverseYAxis(false)
   passSiriusJoyport(false)
+  passSnesJoyport(false)
   passSetShowDebugTab(false)
   
   setPreferenceSpeedMode(0, origin)

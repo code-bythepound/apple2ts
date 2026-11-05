@@ -1900,6 +1900,10 @@ msgctxt "gamepad.siriusJoyport"
 msgid "Sirius Joyport Mode"
 msgstr ""
 
+msgctxt "gamepad.snesJoyport"
+msgid "SNES Gamepad Mode"
+msgstr ""
+
 msgctxt "gamepad.reverseYAxis"
 msgid "Reverse Y-Axis for Joystick"
 msgstr ""

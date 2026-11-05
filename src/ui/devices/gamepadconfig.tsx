@@ -18,6 +18,7 @@ const joystickSettings = [
   ["keyboard.joystick.arrowKeys", "arrowKeysAsJoystick", true],
   ["keyboard.joystick.reverseYAxis", "reverseYAxis", true],
   ["keyboard.joystick.siriusJoyport", "siriusJoyport", true],
+  ["keyboard.joystick.snesJoyport", "snesJoyport", true],
   ["keyboard.joystick.touchJoystick", "touchJoystick", isTouchDevice],
   ["keyboard.joystick.tiltSensorJoystick", "tiltSensorJoystick", isTouchDevice]
 ] as const

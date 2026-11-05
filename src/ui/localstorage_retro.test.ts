@@ -1,6 +1,7 @@
 const passSiriusJoyport = jest.fn()
+const passSnesJoyport = jest.fn()
 
-jest.mock("./main2worker", () => ({ passSiriusJoyport }))
+jest.mock("./main2worker", () => ({ passSiriusJoyport, passSnesJoyport }))
 jest.mock("./ui_settings", () => ({
   getTheme: jest.fn(),
   setTheme: jest.fn(),
@@ -73,6 +74,21 @@ describe("settings change events", () => {
     setPreferenceBoolean("siriusJoyport", enabled)
 
     expect(passSiriusJoyport).toHaveBeenCalledWith(enabled)
+  })
+
+  test.each([true, false])("applies SNES gamepad setting %s live", enabled => {
+    setPreferenceBoolean("snesJoyport", enabled)
+
+    expect(passSnesJoyport).toHaveBeenCalledWith(enabled)
+  })
+
+  test("keeps Sirius and SNES modes mutually exclusive", () => {
+    setPreferenceBoolean("siriusJoyport", true)
+    setPreferenceBoolean("snesJoyport", true)
+
+    expect(passSiriusJoyport).toHaveBeenLastCalledWith(false)
+    expect(passSnesJoyport).toHaveBeenLastCalledWith(true)
+    expect(localStorage.getItem("siriusJoyport")).toBeNull()
   })
 
   test("identifies the visible control changed by the standard UI", () => {

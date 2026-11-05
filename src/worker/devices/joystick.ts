@@ -2,6 +2,7 @@ import { defaultButtons, getGameMapping } from "../games/game_mappings"
 import { memSetC000 } from "../memory"
 import { SWITCHES } from "../softswitches"
 import { checkSiriusJoyportValues, getSiriusJoyport, siriusJoyportButtons } from "./sirius_joyport"
+import { checkSnesJoyportValue, getSnesJoyport, setSnesJoyportGamepads } from "./snes_joyport"
 // import { doSaveTimeSlice } from "./motherboard"
 // import { addToBufferDebounce } from "./keyboard"
 
@@ -112,7 +113,9 @@ export const checkJoystickValues = (cycleCount: number, value: number) => {
 }
 
 export const checkPushButtonValues = (addr: number, value: number) => {
-  if (getSiriusJoyport()) {
+  if (getSnesJoyport() && addr === SWITCHES.PB2.isSetAddr) {
+    checkSnesJoyportValue(addr)
+  } else if (getSiriusJoyport()) {
     checkSiriusJoyportValues(addr)
   } else {
     let isSet = false
@@ -126,19 +129,13 @@ export const checkPushButtonValues = (addr: number, value: number) => {
 }
 
 let gameMapping: GameLibraryItem
-let gamePadMapping: GamePadMapping
 let isKeyboardJoystick = false
 
-export const setGamepads = (gamePadsIn: EmuGamepad[]) => {
-  gamePads = gamePadsIn
+export const setGamepads = (gamePadsIn: EmuGamepad[] | null) => {
+  setSnesJoyportGamepads(gamePadsIn)
+  gamePads = gamePadsIn ?? []
   isKeyboardJoystick = !gamePads.length || !gamePads[0].buttons.length
   gameMapping = getGameMapping()
-  if (gameMapping.gamepad) {
-    gamePadMapping = gameMapping.gamepad
-  } else {
-    const siriusJoyport = getSiriusJoyport()
-    gamePadMapping = siriusJoyport ? siriusJoyportButtons : defaultButtons
-  }
 }
 
 const nearZero = (value: number) => {return value > -0.01 && value < 0.01}
@@ -188,6 +185,8 @@ const handleGamepad = (gp: number) => {
     paddle3timeout = stick[1]
   }
   const buttons = gamePads[gp].buttons
+  const gamePadMapping = gameMapping.gamepad ??
+    (getSiriusJoyport() ? siriusJoyportButtons : defaultButtons)
   // This is a hack for generic Ucom controllers, which map the D-pad buttons
   // to strange values on axis 9.
   if (axes.length >= 10) {

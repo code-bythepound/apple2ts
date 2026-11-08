@@ -10,7 +10,7 @@ permissions:
 
 on:
   push:
-    branches: [ main ]
+    branches: [ vera-perf ]
   workflow_dispatch:
 
 jobs:

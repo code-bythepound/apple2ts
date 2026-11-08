@@ -60,6 +60,7 @@ export enum MSG_WORKER {
   OPERATION_RESULT,
   VERA_SD_STATUS,
   VERA_SD_IMAGE_DATA,
+  VERA_AUDIO_BATCH,
 }
 
 export interface VeraSdStatus {
@@ -141,6 +142,8 @@ export enum MSG_MAIN {
   VERA_SD_GET_IMAGE,
   VERA_SD_WRITE_PROTECT,
   VERA_SD_CLEAR_CHANGES,
+  VERA_PERF,
+  VERA_FRAME_ACK,
 }
 
 export const DEFAULT_SLOT_CONFIG: SlotConfig = {

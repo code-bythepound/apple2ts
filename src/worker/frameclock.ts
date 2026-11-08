@@ -21,6 +21,10 @@ export class FrameClock {
     return true
   }
 
+  lateness(now: number): number {
+    return Math.max(0, now - this.deadline)
+  }
+
   delay(now: number): number {
     return Math.max(1, Math.ceil(this.deadline - now))
   }

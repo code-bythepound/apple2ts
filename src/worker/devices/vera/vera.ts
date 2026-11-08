@@ -6,7 +6,8 @@ import { s6502 } from "../../instructions"
 import { setSlotIOCallback } from "../../memory"
 import { passVeraFmReset, passVeraFmWrite } from "../../worker2main"
 import { getCpuCyclesPerRefresh } from "../../motherboard"
-import { video_cycles_until_next_event, video_init, video_step, video_update, video_reset, video_read, video_write, video_get_irq_out } from "./video"
+import { isWorkerPerfEnabled, recordVeraSync } from "../../worker_perf"
+import { video_cycles_until_next_event, video_init, video_step, video_update, video_reset, video_read, video_write, video_get_irq_out, video_set_perf_enabled } from "./video"
 import { vera_spi_init, vera_spi_step, sdcard_select } from "./sdcard"
 
 let slot: number = 5
@@ -19,6 +20,10 @@ export const setVeraFmEnabled = (enabled: boolean) => {
   fmEnabled = enabled
   ymBusyUntil = 0
   passVeraFmReset()
+}
+
+export const setVeraPerfEnabled = (enabled: boolean) => {
+  video_set_perf_enabled(enabled)
 }
 
 const interrupt = (onoff: boolean): void => {
@@ -41,7 +46,8 @@ const scheduleNextSync = () => {
   nextSyncCycle = s6502.cycleCount + video_cycles_until_next_event()
 }
 
-export const syncVera = (): void => {
+export const syncVera = (reschedule = true): void => {
+	const syncStart = isWorkerPerfEnabled() ? performance.now() : 0
   const cycleDelta = s6502.cycleCount - prevCycleCount
   if (cycleDelta < 0) {
     // Save-state restoration, time travel, and debugger edits can move the
@@ -52,12 +58,32 @@ export const syncVera = (): void => {
   }
   if (cycleDelta === 0) return
 
+  const videoStepStart = syncStart ? performance.now() : 0
   const newFrame = video_step(1, cycleDelta, false)
+  const videoStepMs = videoStepStart ? performance.now() - videoStepStart : 0
+  const spiStepStart = syncStart ? performance.now() : 0
   vera_spi_step(cycleDelta)
-  if (newFrame) video_update()
+  const spiStepMs = spiStepStart ? performance.now() - spiStepStart : 0
+  const frameUpdateStart = syncStart && newFrame ? performance.now() : 0
+  const publication = newFrame ? video_update(true) : null
+  const frameUpdateMs = frameUpdateStart ? performance.now() - frameUpdateStart : 0
+  const irqStart = syncStart ? performance.now() : 0
   interrupt(video_get_irq_out())
+  const irqMs = irqStart ? performance.now() - irqStart : 0
+  const scheduleStart = syncStart ? performance.now() : 0
   prevCycleCount = s6502.cycleCount
-  scheduleNextSync()
+  if (reschedule) scheduleNextSync()
+  const scheduleMs = scheduleStart ? performance.now() - scheduleStart : 0
+	if (syncStart) {
+    recordVeraSync(performance.now() - syncStart, {
+      videoStepMs,
+      spiStepMs,
+      frameUpdateMs,
+      irqMs,
+      scheduleMs,
+    })
+  }
+  if (typeof publication === "function") publication()
 }
 
 export const initVera = () => {
@@ -125,7 +151,10 @@ const handleVeraIO = (addr: number, val = -1): number => {
   if (addr >= 0xc100) {
     // Register accesses must observe VERA at the current CPU cycle even though
     // background stepping is scheduled only at observable events.
-    syncVera()
+    // Ordinary register and VRAM accesses do not change the already scheduled
+    // absolute raster deadline. Preserve it instead of recalculating it for
+    // every byte transferred through the VERA ports.
+    syncVera(s6502.cycleCount >= nextSyncCycle)
     if (val >= 0) {
       const reg = addr & 0x1f
       video_write(reg, val)

@@ -5,15 +5,18 @@ import {
   passAppleCommandKeyRelease,
   doOnMessage,
   setMain2Worker,
+  clearMain2Worker,
   handleGetMemSize,
   handleGetMachineName,
   handleGetSlotConfig,
   passSetRunMode,
-  setBootCallback
+  setBootCallback,
+  markMachineStateReactUpdate,
+  recordMachineStateReactCommit,
 } from "./main2worker"
 import Apple2Canvas from "./canvas"
 import ControlPanel from "./controls/controlpanel"
-import { useEffect, useState } from "react"
+import { useEffect, useLayoutEffect, useState } from "react"
 import DebugSection from "./panels/panels"
 import FileInput from "./fileinput"
 import { RestoreSaveState } from "./save_restore_ui"
@@ -50,6 +53,15 @@ const DisplayApple2 = () => {
   const [showFileOpenDialog, setShowFileOpenDialog] = useState<{ show: boolean; index: number; append?: boolean }>({ show: false, index: 2, append: false })
   const [worker, setWorker] = useState<Worker | null>(null)
 
+  useLayoutEffect(() => {
+    recordMachineStateReactCommit()
+  }, [renderCount])
+
+  useEffect(() => {
+    if (!worker) return
+    return () => clearMain2Worker(worker)
+  }, [worker])
+
   // We need to create our worker here so it has access to our properties
   // such as cpu speed and help text. Otherwise, if the emulator changed
   // those, we would have no way of setting them here and re-rendering.
@@ -59,6 +71,7 @@ const DisplayApple2 = () => {
     newWorker.onmessage = (e: MessageEvent) => {
       const result = doOnMessage(e)
       if (result) {
+        if (result.machineState) markMachineStateReactUpdate()
         updateDisplay(result.speed, result.helptext)
       }
     }

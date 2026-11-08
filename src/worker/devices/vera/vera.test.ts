@@ -1,7 +1,7 @@
 import fs from "fs"
-import { enableVera, resetVera, initVera, sdcard_attach_image, sdcard_detach_image, sdcard_get_status, syncVera } from "./vera"
+import { enableVera, resetVera, initVera, sdcard_attach_image, sdcard_detach_image, sdcard_get_status, setVeraPerfEnabled, syncVera } from "./vera"
 import * as video from "./video"
-import { video_cycles_until_next_event, video_step, video_get_framebuffer, video_reset, video_update, video_write } from "./video"
+import { video_ack_framebuffer, video_cycles_until_next_event, video_step, video_get_framebuffer, video_reset, video_set_perf_enabled, video_update, video_write } from "./video"
 import { vera_spi_step, sdcard_set_write_protected, sdcard_clear_changes, sdcard_get_write_seq } from "./sdcard"
 import { memGet, memSet } from "../../memory"
 import { doBoot } from "../../motherboard"
@@ -9,6 +9,7 @@ import { s6502, setPC, setCycleCount } from "../../instructions"
 import { processInstruction } from "../../cpu6502"
 import { getVeraSpriteDemoAssembly, getVeraMode7DemoAssembly, buildVeraDemo } from "./vera_demos"
 import { MSG_WORKER } from "../../../common/utility"
+import { setWorkerPerfEnabled } from "../../worker_perf"
 
 describe("VERA Graphics & Sound Card Emulation on Apple II", () => {
   beforeAll(() => {
@@ -48,9 +49,161 @@ describe("VERA Graphics & Sound Card Emulation on Apple II", () => {
     video_write(0x09, 0x01)
     postMessage.mockClear()
 
-    for (let frame = 0; frame < 4; frame++) video_update()
+    for (let frame = 0; frame < 4; frame++) {
+      video_update()
+      const message = postMessage.mock.calls.at(-1)?.[0]
+      video_ack_framebuffer(message.payload.sequence)
+    }
 
     expect(postMessage).toHaveBeenCalledTimes(4)
+  })
+
+  test("attributes the boundary-crossing sync to the frame it completes", () => {
+    const postMessage = jest.mocked(globalThis.postMessage)
+    video_write(0x09, 0x01)
+    setWorkerPerfEnabled(true)
+    setVeraPerfEnabled(true)
+    postMessage.mockClear()
+
+    const cycleDelta = video_cycles_until_next_event()
+    setCycleCount(s6502.cycleCount + cycleDelta)
+    syncVera()
+
+    const frame = postMessage.mock.calls
+      .map(call => call[0])
+      .find(message => message.msg === MSG_WORKER.VERA_FRAME)
+    try {
+      expect(frame?.payload.stats).toEqual(expect.objectContaining({
+        renderedFrames: 1,
+        veraSyncCalls: 1,
+        veraSyncMs: expect.any(Number),
+        maxVeraSyncMs: expect.any(Number),
+        veraVideoStepMs: expect.any(Number),
+        maxVeraVideoStepMs: expect.any(Number),
+        veraSpiStepMs: expect.any(Number),
+        veraFrameUpdateMs: expect.any(Number),
+        veraIrqMs: expect.any(Number),
+        veraScheduleMs: expect.any(Number),
+        veraOtherMs: expect.any(Number),
+        maxVeraOtherMs: expect.any(Number),
+      }))
+      expect(frame?.payload.stats.veraSyncMs).toBeGreaterThan(0)
+      expect(frame?.payload.stats.veraVideoStepMs).toBeGreaterThan(0)
+      expect(frame?.payload.stats.veraFrameUpdateMs).toBeGreaterThan(0)
+    } finally {
+      setVeraPerfEnabled(false)
+      setWorkerPerfEnabled(false)
+    }
+  })
+
+  test("coalesces framebuffer publication while preserving rendered frame sequence", () => {
+    const postMessage = jest.mocked(globalThis.postMessage)
+    video_write(0x09, 0x01)
+    video_set_perf_enabled(true)
+    postMessage.mockClear()
+
+    video_update()
+    const firstSequence = postMessage.mock.calls[0][0].payload.sequence as number
+    video_update()
+    video_update()
+    video_update()
+    expect(postMessage).toHaveBeenCalledTimes(1)
+
+    video_ack_framebuffer(firstSequence)
+
+    expect(postMessage).toHaveBeenCalledTimes(2)
+    expect(postMessage.mock.calls[1][0]).toEqual(expect.objectContaining({
+      msg: MSG_WORKER.VERA_FRAME,
+      payload: expect.objectContaining({
+        sequence: firstSequence + 3,
+        stats: expect.objectContaining({
+          renderedFrames: 3,
+          coalescedFrames: 2,
+        }),
+      }),
+    }))
+    video_set_perf_enabled(false)
+  })
+
+  test("initializes inactive sprite caches and clips sprites left of the line buffer", () => {
+    const postMessage = jest.mocked(globalThis.postMessage)
+    const writeVram = (address: number, values: number[]) => {
+      video_write(0x00, address & 0xFF)
+      video_write(0x01, (address >> 8) & 0xFF)
+      video_write(0x02, 0x10 | ((address >> 16) & 1))
+      for (const value of values) video_write(0x03, value)
+    }
+
+    // Leave stale enabled geometry in the property cache, then verify reset
+    // refreshes it before a high-numbered sprite expands the scan range.
+    writeVram(0x1FC00, [0, 0, 0, 0, 0, 0, 0x0C, 0])
+    video_reset()
+    video_set_perf_enabled(true)
+    video_write(0x09, 0x41) // VGA output with sprites enabled
+
+    // Sprite 127 is an 8x8 sprite positioned completely left of the buffer.
+    // Untouched slots 0..126 must remain disabled rather than decoding bogus
+    // 64-byte rows from undefined cached properties.
+    writeVram(0x1FC00 + 127 * 8, [0, 0, 0xF8, 0x03, 0, 0, 0x0C, 0])
+    postMessage.mockClear()
+    video_step(1, 16801, false)
+    video_update()
+
+    const stats = postMessage.mock.calls
+      .map(call => call[0])
+      .find(message => message.msg === MSG_WORKER.VERA_FRAME)
+      ?.payload.stats as VeraFrameStats
+    expect(stats).toEqual(expect.objectContaining({
+      spriteSlotsChecked: 128 * 480,
+      spriteEnabledChecks: 480,
+      spriteRowsDecoded: 8,
+      spritePixelsTested: 8 * 8,
+      spriteVisiblePixels: 0,
+      spriteOpaquePixels: 0,
+      spriteAttributeRefreshes: 8,
+      repeatedEffectiveLines: 0,
+      activeSprites: 1,
+      maxActiveSpriteIndex: 127,
+    }))
+    video_set_perf_enabled(false)
+  })
+
+  test("batches PCM writes while preserving every FIFO byte", () => {
+    const postMessage = jest.mocked(globalThis.postMessage)
+    postMessage.mockClear()
+
+    for (let value = 0; value < 300; value++) video_write(0x1D, value & 0xFF)
+    video_update()
+
+    const batches = postMessage.mock.calls
+      .map(call => call[0])
+      .filter(message => message.msg === MSG_WORKER.VERA_AUDIO_BATCH)
+      .map(message => message.payload as VeraAudioWrite[])
+    expect(batches.map(batch => batch.length)).toEqual([64, 64, 64, 64, 44])
+    expect(batches.flat().map(event => event.value)).toEqual(
+      Array.from({length: 300}, (_, value) => value & 0xFF),
+    )
+    expect(batches.flat().every(event => event.reg === "fifo")).toBe(true)
+  })
+
+  test("preserves PSG and PCM ordering in a shared audio batch", () => {
+    const postMessage = jest.mocked(globalThis.postMessage)
+    video_write(0x00, 0xC0)
+    video_write(0x01, 0xF9)
+    video_write(0x02, 0x11)
+    postMessage.mockClear()
+
+    video_write(0x03, 0x12)
+    video_write(0x1D, 0x34)
+    video_write(0x03, 0x56)
+    video_update()
+
+    const batch = postMessage.mock.calls
+      .map(call => call[0])
+      .find(message => message.msg === MSG_WORKER.VERA_AUDIO_BATCH)
+      ?.payload as VeraAudioWrite[]
+    expect(batch.map(event => event.reg)).toEqual([0, "fifo", 1])
+    expect(batch.map(event => event.value)).toEqual([0x12, 0x34, 0x56])
   })
 
   test("resynchronizes after the CPU cycle counter moves backward", () => {
@@ -114,6 +267,7 @@ describe("VERA Graphics & Sound Card Emulation on Apple II", () => {
 
   test("publishes a worker frame at the scheduled VGA frame boundary", () => {
     const postMessage = jest.mocked(globalThis.postMessage)
+    video_write(0x09, 0x01)
     const startCycle = s6502.cycleCount
     memSet(0x2000, 0xEA)
     setPC(0x2000)
@@ -124,7 +278,23 @@ describe("VERA Graphics & Sound Card Emulation on Apple II", () => {
 
     expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
       msg: MSG_WORKER.VERA_FRAME,
-      payload: expect.objectContaining({ sequence: expect.any(Number) }),
+      payload: expect.objectContaining({
+        sequence: expect.any(Number),
+        transferable: true,
+      }),
+    }), [expect.any(ArrayBuffer)])
+  })
+
+  test("keeps interlaced NTSC framebuffers in the worker", () => {
+    const postMessage = jest.mocked(globalThis.postMessage)
+    video_write(0x09, 0x02)
+    postMessage.mockClear()
+
+    video_update()
+
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      msg: MSG_WORKER.VERA_FRAME,
+      payload: expect.objectContaining({ transferable: false }),
     }))
   })
 

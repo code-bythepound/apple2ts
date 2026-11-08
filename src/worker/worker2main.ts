@@ -1,4 +1,12 @@
-import { setVeraFmEnabled } from "./devices/vera/vera"
+import { setVeraFmEnabled, setVeraPerfEnabled } from "./devices/vera/vera"
+import {
+  estimateStructuredCloneBytes,
+  isWorkerPerfEnabled,
+  recordVeraAudioBatchPost,
+  recordMachineStatePost,
+  setWorkerPerfEnabled,
+} from "./worker_perf"
+import { video_ack_framebuffer, video_return_framebuffer } from "./devices/vera/video"
 import { attachAudioClockPort, doSetRunMode, doSetSpeedMode,
   doStepInto, doStepOver, doStepOut, doSetBinaryBlock, doLoadBinary, doRunBinary, doSetIsDebugging, doSetState6502, requestSnapshot, doSetPastedText, forceSoftSwitches,
   forceVideo7Override,
@@ -53,14 +61,19 @@ declare const self: DedicatedWorkerGlobalScope
 export {}
 
 let isTesting = false
+const workerInstanceId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 export const setIsTesting = () => {
   isTesting = true
 }
 
-const doPostMessage = (msg: MSG_WORKER, payload: MessagePayload) => {
+const doPostMessage = (msg: MSG_WORKER, payload: MessagePayload, transfer?: Transferable[]) => {
   if (!isTesting) {
     try {
-      self.postMessage({msg, payload})
+      if (transfer) {
+        self.postMessage({msg, payload}, transfer)
+      } else {
+        self.postMessage({msg, payload})
+      }
     } catch (error) {
       console.error(`worker2main: doPostMessage error: ${error}`)
     }
@@ -68,14 +81,50 @@ const doPostMessage = (msg: MSG_WORKER, payload: MessagePayload) => {
 }
 
 let veraFrameSequence = 0
+let previousVeraPostMs = 0
 
-export const passVeraFramebuffer = (fb: Uint8ClampedArray<ArrayBuffer>, dcVideo: number) => {
-  const sequence = ++veraFrameSequence
+export const nextVeraFrameSequence = () => ++veraFrameSequence
+
+export const passVeraFramebuffer = (fb: Uint8ClampedArray<ArrayBuffer>, dcVideo: number,
+  renderStats?: Pick<VeraFrameStats,
+    "renderMs" | "renderedFrames" | "coalescedFrames" | "framebufferPoolMisses" |
+    "spriteSlotsChecked" | "spriteEnabledChecks" | "spriteRowsDecoded" |
+    "spritePixelsTested" | "spriteVisiblePixels" | "spriteOpaquePixels" |
+    "spriteAttributeRefreshes" | "repeatedEffectiveLines" | "activeSprites" |
+    "maxActiveSpriteIndex" |
+    "workerTimedFrames" | "workerFrameElapsedMs" | "maxWorkerFrameIntervalMs" |
+    "workerAdvanceCalls" | "workerAdvanceMs" |
+    "maxWorkerAdvanceMs" | "veraSyncCalls" | "veraSyncMs" | "maxVeraSyncMs" |
+    "veraVideoStepMs" | "maxVeraVideoStepMs" | "veraSpiStepMs" | "maxVeraSpiStepMs" |
+    "veraFrameUpdateMs" | "maxVeraFrameUpdateMs" | "veraIrqMs" | "maxVeraIrqMs" |
+    "veraScheduleMs" | "maxVeraScheduleMs" | "veraOtherMs" | "maxVeraOtherMs" |
+    "veraAudioBatchCount" | "veraAudioBatchEvents" | "veraAudioBatchPrepareMs" |
+    "maxVeraAudioBatchPrepareMs" | "veraAudioBatchPostCount" | "veraAudioBatchPostMs" |
+    "maxVeraAudioBatchPostMs" | "videoUpdateMs" |
+    "workerTimerCallbacks" | "workerTimerCallbackMs" | "maxWorkerTimerCallbackMs" |
+    "workerWakeCount" | "workerTimerWakeCount" | "workerAudioWakeCount" |
+    "workerWakeLatenessMs" | "maxWorkerWakeLatenessMs" |
+    "machineStateBuildCount" | "machineStateBuildMs" |
+    "machineStatePostCount" | "machineStatePostMs" |
+    "machineStateEstimateMs" | "machineStateBytes" |
+    "completedAtEpochMs">,
+  transfer = false, sequence = nextVeraFrameSequence()) => {
+  const stats = renderStats ? {
+    ...renderStats,
+    workerInstanceId,
+    previousPostMs: previousVeraPostMs,
+    sentAtEpochMs: performance.timeOrigin + performance.now(),
+  } : undefined
+  const postStart = stats ? performance.now() : 0
   if (dcVideo !== 0) {
-    doPostMessage(MSG_WORKER.VERA_FRAME, { fb, dcVideo, sequence })
+    const payload = stats
+      ? { fb, dcVideo, sequence, stats, transferable: transfer }
+      : { fb, dcVideo, sequence, transferable: transfer }
+    doPostMessage(MSG_WORKER.VERA_FRAME, payload, transfer ? [fb.buffer] : undefined)
   } else {
-    doPostMessage(MSG_WORKER.VERA_FRAME, { dcVideo, sequence })
+    doPostMessage(MSG_WORKER.VERA_FRAME, stats ? { dcVideo, sequence, stats } : { dcVideo, sequence })
   }
+  if (stats) previousVeraPostMs = performance.now() - postStart
 }
 
 export const passErrorMsg = (event: ErrorMsg) => {
@@ -92,6 +141,12 @@ export const passVeraPsgBatch = (events: VeraPsgWrite[]) => {
 
 export const passVeraPcmWrite = (event: VeraPcmWrite) => {
   doPostMessage(MSG_WORKER.VERA_PCM_WRITE, event)
+}
+
+export const passVeraAudioBatch = (events: VeraAudioWrite[]) => {
+	const postStart = isWorkerPerfEnabled() ? performance.now() : 0
+	doPostMessage(MSG_WORKER.VERA_AUDIO_BATCH, events)
+	if (postStart) recordVeraAudioBatchPost(performance.now() - postStart)
 }
 
 let pendingFmWrites: VeraFmWrite[] = []
@@ -114,7 +169,16 @@ export const passMachineState = (state: MachineState) => {
     doPostMessage(MSG_WORKER.VERA_FM_WRITE, pendingFmWrites)
     pendingFmWrites = []
   }
+  if (!isWorkerPerfEnabled()) {
+    doPostMessage(MSG_WORKER.MACHINE_STATE, state)
+    return
+  }
+  const estimateStart = performance.now()
+  const estimatedBytes = estimateStructuredCloneBytes(state)
+  const estimateMs = performance.now() - estimateStart
+  const postStart = performance.now()
   doPostMessage(MSG_WORKER.MACHINE_STATE, state)
+  recordMachineStatePost(performance.now() - postStart, estimateMs, estimatedBytes)
 }
 
 export const passClickSpeaker = (cycleCount: number) => {
@@ -517,6 +581,20 @@ if (typeof self !== "undefined") {
       case MSG_MAIN.VERA_FM_ENABLED:
         setVeraFmEnabled(e.data.payload as boolean)
         break
+      case MSG_MAIN.VERA_PERF:
+        setVeraPerfEnabled(e.data.payload as boolean)
+        setWorkerPerfEnabled(e.data.payload as boolean)
+        break
+      case MSG_MAIN.VERA_FRAME_ACK: {
+        const payload = e.data.payload as number | {sequence: number, returnedBuffer: ArrayBuffer}
+        if (typeof payload === "number") {
+          video_ack_framebuffer(payload)
+        } else {
+          video_return_framebuffer(payload.returnedBuffer)
+          video_ack_framebuffer(payload.sequence)
+        }
+        break
+      }
       case MSG_MAIN.VERA_SLOT:
         doSetVeraSlot(e.data.payload as VERA_SLOT)
         break

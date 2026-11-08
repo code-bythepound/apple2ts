@@ -20,6 +20,7 @@ import {
   setExecutionStateCallback,
   requestWriteMemory,
   setMain2Worker,
+  clearMain2Worker,
 } from "./main2worker"
 
 jest.mock("./panels/disassembly/disassembly_utilities", () => ({
@@ -33,7 +34,7 @@ jest.mock("./devices/audio/speaker", () => ({
 jest.mock("./devices/disk/driveprops", () => ({ doSetUIDriveProps: jest.fn() }))
 jest.mock("./ui_settings", () => ({ getHelpText: () => "" }))
 
-const worker = { postMessage: jest.fn() }
+const worker = { postMessage: jest.fn(), terminate: jest.fn() }
 
 const sendMachineState = (runMode: RUN_MODE) => {
   doOnMessage({
@@ -58,6 +59,20 @@ const lastOperationId = () => worker.postMessage.mock.calls.at(-1)[0].operationI
 describe("worker operations", () => {
   beforeAll(() => setMain2Worker(worker as unknown as Worker))
   beforeEach(() => worker.postMessage.mockClear())
+
+  test("replaces and cleans up emulator workers", () => {
+    const first = {postMessage: jest.fn(), terminate: jest.fn()}
+    const second = {postMessage: jest.fn(), terminate: jest.fn()}
+    setMain2Worker(first as unknown as Worker)
+    setMain2Worker(second as unknown as Worker)
+    expect(first.terminate).toHaveBeenCalledTimes(1)
+
+    clearMain2Worker(first as unknown as Worker)
+    expect(second.terminate).not.toHaveBeenCalled()
+    clearMain2Worker(second as unknown as Worker)
+    expect(second.terminate).toHaveBeenCalledTimes(1)
+    setMain2Worker(worker as unknown as Worker)
+  })
 
   test("resolves only the operation named by the worker result", async () => {
     const operation = requestSpeedMode(4)
@@ -382,7 +397,7 @@ test("publishes only new worker-owned execution snapshots", () => {
 
   expect(snapshots).toEqual([execution])
 
-  setMain2Worker({postMessage: jest.fn()} as unknown as Worker)
+  setMain2Worker({postMessage: jest.fn(), terminate: jest.fn()} as unknown as Worker)
   const replacement = {...execution, executionSequence: 0, PC: 0x7000}
   const publishedReplacement = {...replacement, executionSequence: 10}
   doOnMessage({
@@ -390,4 +405,34 @@ test("publishes only new worker-owned execution snapshots", () => {
   } as MessageEvent)
   expect(snapshots).toEqual([execution, publishedReplacement])
   setExecutionStateCallback(() => {})
+})
+
+test("returns a transferred VERA framebuffer after it is superseded", () => {
+  const frameWorker = {postMessage: jest.fn(), terminate: jest.fn()}
+  setMain2Worker(frameWorker as unknown as Worker)
+  frameWorker.postMessage.mockClear()
+  const firstBuffer = new Uint8ClampedArray(640 * 480 * 4)
+  const secondBuffer = new Uint8ClampedArray(640 * 480 * 4)
+
+  doOnMessage({data: {msg: MSG_WORKER.VERA_FRAME, payload: {
+    fb: firstBuffer,
+    dcVideo: 1,
+    sequence: 1,
+    transferable: true,
+  }}} as MessageEvent)
+  frameWorker.postMessage.mockClear()
+  doOnMessage({data: {msg: MSG_WORKER.VERA_FRAME, payload: {
+    fb: secondBuffer,
+    dcVideo: 1,
+    sequence: 2,
+    transferable: true,
+  }}} as MessageEvent)
+
+  expect(frameWorker.postMessage).toHaveBeenCalledWith({
+    msg: MSG_MAIN.VERA_FRAME_ACK,
+    payload: {
+      sequence: 2,
+      returnedBuffer: firstBuffer.buffer,
+    },
+  }, [firstBuffer.buffer])
 })

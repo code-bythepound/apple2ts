@@ -37,7 +37,7 @@ const initVeraPsgAudio = async () => {
 
 let hasLoggedAudioWorkletError = false
 
-export const playVeraPsgBatch = async (events: VeraPsgWrite[]) => {
+export const playVeraAudioBatch = async (events: VeraAudioWrite[]) => {
   if (!isAudioEnabled() || events.length === 0) return
 
   try {
@@ -53,6 +53,8 @@ export const playVeraPsgBatch = async (events: VeraPsgWrite[]) => {
     }
   }
 }
+
+export const playVeraPsgBatch = (events: VeraPsgWrite[]) => playVeraAudioBatch(events)
 
 export const playVeraPsgWrite = async (event: VeraPsgWrite) => {
   if (!isAudioEnabled()) return

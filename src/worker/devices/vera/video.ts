@@ -9,7 +9,8 @@ import { vera_spi_read, vera_spi_write } from "./sdcard"
   // @ts-ignore
 import { pcm_reset, pcm_is_fifo_almost_empty, pcm_read_ctrl, pcm_read_rate, pcm_write_ctrl, pcm_write_rate, pcm_write_fifo, pcm_render } from "./pcm"
 import { s6502 } from "../../instructions"
-import { passVeraFramebuffer, passVeraPcmWrite, passVeraPsgBatch } from "../../worker2main"
+import { nextVeraFrameSequence, passVeraAudioBatch, passVeraFramebuffer } from "../../worker2main"
+import { isWorkerPerfEnabled, recordVeraAudioBatchPrepare, recordVideoUpdate, takeWorkerPerfStats } from "../../worker_perf"
 
 const VERA_VERSION_MAJOR = 47
 const VERA_VERSION_MINOR = 0
@@ -155,13 +156,190 @@ let vga_scan_pos_y: number = 0
 let ntsc_half_cnt: number = 0
 let ntsc_scan_pos_y: number = 0
 let frame_count: number = 0
-const framebuffer = new Uint8ClampedArray(SCREEN_WIDTH * SCREEN_HEIGHT * 4)
-const framebuffer32 = new Uint32Array(framebuffer.buffer)
+const FRAMEBUFFER_BYTES = SCREEN_WIDTH * SCREEN_HEIGHT * 4
+const MAX_FRAMEBUFFER_SPARES = 2
+const make_framebuffer = () => new Uint8ClampedArray(FRAMEBUFFER_BYTES)
+let framebuffer = make_framebuffer()
+let framebuffer32 = new Uint32Array(framebuffer.buffer)
+const framebuffer_pool = [make_framebuffer(), make_framebuffer()]
+let perf_framebuffer_pool_misses = 0
+
+type FrameRenderStats = Pick<VeraFrameStats,
+	"renderMs" | "renderedFrames" | "coalescedFrames" | "framebufferPoolMisses" |
+	"spriteSlotsChecked" | "spriteEnabledChecks" | "spriteRowsDecoded" |
+	"spritePixelsTested" | "spriteVisiblePixels" | "spriteOpaquePixels" |
+	"spriteAttributeRefreshes" | "repeatedEffectiveLines" | "activeSprites" |
+	"maxActiveSpriteIndex" |
+	"workerTimedFrames" | "workerFrameElapsedMs" | "maxWorkerFrameIntervalMs" |
+		"workerAdvanceCalls" | "workerAdvanceMs" |
+		"maxWorkerAdvanceMs" | "veraSyncCalls" | "veraSyncMs" | "maxVeraSyncMs" |
+		"veraVideoStepMs" | "maxVeraVideoStepMs" | "veraSpiStepMs" | "maxVeraSpiStepMs" |
+		"veraFrameUpdateMs" | "maxVeraFrameUpdateMs" | "veraIrqMs" | "maxVeraIrqMs" |
+		"veraScheduleMs" | "maxVeraScheduleMs" | "veraOtherMs" | "maxVeraOtherMs" |
+		"veraAudioBatchCount" | "veraAudioBatchEvents" | "veraAudioBatchPrepareMs" |
+		"maxVeraAudioBatchPrepareMs" | "veraAudioBatchPostCount" | "veraAudioBatchPostMs" |
+		"maxVeraAudioBatchPostMs" | "videoUpdateMs" |
+		"workerTimerCallbacks" | "workerTimerCallbackMs" | "maxWorkerTimerCallbackMs" |
+		"workerWakeCount" | "workerTimerWakeCount" | "workerAudioWakeCount" |
+		"workerWakeLatenessMs" | "maxWorkerWakeLatenessMs" |
+		"machineStateBuildCount" | "machineStateBuildMs" |
+		"machineStatePostCount" | "machineStatePostMs" |
+		"machineStateEstimateMs" | "machineStateBytes" |
+	"completedAtEpochMs">
+type PendingFramebuffer = {
+	fb: Uint8ClampedArray<ArrayBuffer>
+	dcVideo: number
+	sequence: number
+	stats?: FrameRenderStats
+}
+
+let framebuffer_in_flight_sequence: number | null = null
+let pending_framebuffer: PendingFramebuffer | null = null
+
+const use_next_framebuffer = (): void => {
+	const recycled = framebuffer_pool.pop()
+	if (!recycled) perf_framebuffer_pool_misses++
+	framebuffer = recycled ?? make_framebuffer()
+	framebuffer32 = new Uint32Array(framebuffer.buffer)
+}
+
+export const video_return_framebuffer = (buffer: ArrayBuffer): void => {
+	if (buffer.byteLength !== FRAMEBUFFER_BYTES || framebuffer_pool.length >= MAX_FRAMEBUFFER_SPARES) return
+	framebuffer_pool.push(new Uint8ClampedArray(buffer))
+}
+
+const merge_frame_stats = (
+	older: FrameRenderStats | undefined,
+	newer: FrameRenderStats | undefined,
+): FrameRenderStats | undefined => {
+	if (!older) return newer
+	if (!newer) return older
+	return {
+		renderMs: older.renderMs + newer.renderMs,
+		renderedFrames: older.renderedFrames + newer.renderedFrames,
+		coalescedFrames: older.coalescedFrames + newer.coalescedFrames + 1,
+		framebufferPoolMisses: older.framebufferPoolMisses + newer.framebufferPoolMisses,
+		spriteSlotsChecked: older.spriteSlotsChecked + newer.spriteSlotsChecked,
+		spriteEnabledChecks: older.spriteEnabledChecks + newer.spriteEnabledChecks,
+		spriteRowsDecoded: older.spriteRowsDecoded + newer.spriteRowsDecoded,
+		spritePixelsTested: older.spritePixelsTested + newer.spritePixelsTested,
+		spriteVisiblePixels: older.spriteVisiblePixels + newer.spriteVisiblePixels,
+		spriteOpaquePixels: older.spriteOpaquePixels + newer.spriteOpaquePixels,
+		spriteAttributeRefreshes: older.spriteAttributeRefreshes + newer.spriteAttributeRefreshes,
+		repeatedEffectiveLines: older.repeatedEffectiveLines + newer.repeatedEffectiveLines,
+		activeSprites: older.activeSprites + newer.activeSprites,
+		maxActiveSpriteIndex: Math.max(older.maxActiveSpriteIndex, newer.maxActiveSpriteIndex),
+		workerTimedFrames: older.workerTimedFrames + newer.workerTimedFrames,
+		workerFrameElapsedMs: older.workerFrameElapsedMs + newer.workerFrameElapsedMs,
+		maxWorkerFrameIntervalMs: Math.max(
+			older.maxWorkerFrameIntervalMs,
+			newer.maxWorkerFrameIntervalMs,
+		),
+		workerAdvanceCalls: older.workerAdvanceCalls + newer.workerAdvanceCalls,
+		workerAdvanceMs: older.workerAdvanceMs + newer.workerAdvanceMs,
+		maxWorkerAdvanceMs: Math.max(older.maxWorkerAdvanceMs, newer.maxWorkerAdvanceMs),
+		veraSyncCalls: older.veraSyncCalls + newer.veraSyncCalls,
+		veraSyncMs: older.veraSyncMs + newer.veraSyncMs,
+		maxVeraSyncMs: Math.max(older.maxVeraSyncMs, newer.maxVeraSyncMs),
+		veraVideoStepMs: older.veraVideoStepMs + newer.veraVideoStepMs,
+		maxVeraVideoStepMs: Math.max(older.maxVeraVideoStepMs, newer.maxVeraVideoStepMs),
+		veraSpiStepMs: older.veraSpiStepMs + newer.veraSpiStepMs,
+		maxVeraSpiStepMs: Math.max(older.maxVeraSpiStepMs, newer.maxVeraSpiStepMs),
+		veraFrameUpdateMs: older.veraFrameUpdateMs + newer.veraFrameUpdateMs,
+		maxVeraFrameUpdateMs: Math.max(older.maxVeraFrameUpdateMs, newer.maxVeraFrameUpdateMs),
+		veraIrqMs: older.veraIrqMs + newer.veraIrqMs,
+		maxVeraIrqMs: Math.max(older.maxVeraIrqMs, newer.maxVeraIrqMs),
+		veraScheduleMs: older.veraScheduleMs + newer.veraScheduleMs,
+		maxVeraScheduleMs: Math.max(older.maxVeraScheduleMs, newer.maxVeraScheduleMs),
+		veraOtherMs: older.veraOtherMs + newer.veraOtherMs,
+		maxVeraOtherMs: Math.max(older.maxVeraOtherMs, newer.maxVeraOtherMs),
+		veraAudioBatchCount: older.veraAudioBatchCount + newer.veraAudioBatchCount,
+		veraAudioBatchEvents: older.veraAudioBatchEvents + newer.veraAudioBatchEvents,
+		veraAudioBatchPrepareMs: older.veraAudioBatchPrepareMs + newer.veraAudioBatchPrepareMs,
+		maxVeraAudioBatchPrepareMs: Math.max(
+			older.maxVeraAudioBatchPrepareMs,
+			newer.maxVeraAudioBatchPrepareMs,
+		),
+		veraAudioBatchPostCount: older.veraAudioBatchPostCount + newer.veraAudioBatchPostCount,
+		veraAudioBatchPostMs: older.veraAudioBatchPostMs + newer.veraAudioBatchPostMs,
+		maxVeraAudioBatchPostMs: Math.max(older.maxVeraAudioBatchPostMs, newer.maxVeraAudioBatchPostMs),
+		videoUpdateMs: older.videoUpdateMs + newer.videoUpdateMs,
+		workerTimerCallbacks: older.workerTimerCallbacks + newer.workerTimerCallbacks,
+		workerTimerCallbackMs: older.workerTimerCallbackMs + newer.workerTimerCallbackMs,
+		maxWorkerTimerCallbackMs: Math.max(older.maxWorkerTimerCallbackMs, newer.maxWorkerTimerCallbackMs),
+		workerWakeCount: older.workerWakeCount + newer.workerWakeCount,
+		workerTimerWakeCount: older.workerTimerWakeCount + newer.workerTimerWakeCount,
+		workerAudioWakeCount: older.workerAudioWakeCount + newer.workerAudioWakeCount,
+		workerWakeLatenessMs: older.workerWakeLatenessMs + newer.workerWakeLatenessMs,
+		maxWorkerWakeLatenessMs: Math.max(
+			older.maxWorkerWakeLatenessMs,
+			newer.maxWorkerWakeLatenessMs,
+		),
+		machineStateBuildCount: older.machineStateBuildCount + newer.machineStateBuildCount,
+		machineStateBuildMs: older.machineStateBuildMs + newer.machineStateBuildMs,
+		machineStatePostCount: older.machineStatePostCount + newer.machineStatePostCount,
+		machineStatePostMs: older.machineStatePostMs + newer.machineStatePostMs,
+		machineStateEstimateMs: older.machineStateEstimateMs + newer.machineStateEstimateMs,
+		machineStateBytes: older.machineStateBytes + newer.machineStateBytes,
+		completedAtEpochMs: newer.completedAtEpochMs,
+	}
+}
+
+const send_transfer_framebuffer = (frame: PendingFramebuffer): void => {
+	passVeraFramebuffer(frame.fb, frame.dcVideo, frame.stats, true, frame.sequence)
+	framebuffer_in_flight_sequence = frame.sequence
+}
+
+export const video_ack_framebuffer = (sequence: number): void => {
+	if (sequence !== framebuffer_in_flight_sequence) return
+	framebuffer_in_flight_sequence = null
+	if (!pending_framebuffer) return
+	const frame = pending_framebuffer
+	pending_framebuffer = null
+	send_transfer_framebuffer(frame)
+}
 const scanline_tile_bytes = new Uint8Array(512) // Shared zero-allocation scanline buffer
 const static_ram_wrdata = new Uint8Array(4)
 const static_nibble_mask = new Uint8Array(4)
 const static_cache_to_use = new Uint8Array(4)
-const psg_pending_writes: Array<VeraPsgWrite> = []
+// Bound latency for continuous PCM streams while still replacing thousands
+// of per-byte cross-thread messages with much less frequent batches.
+const AUDIO_BATCH_MAX = 64
+const audio_pending_writes: VeraAudioWrite[] = []
+const flush_audio_writes = (): void => {
+	if (audio_pending_writes.length > 0) {
+		const prepareStart = isWorkerPerfEnabled() ? performance.now() : 0
+		const events = audio_pending_writes.splice(0)
+		if (prepareStart) recordVeraAudioBatchPrepare(performance.now() - prepareStart, events.length)
+		passVeraAudioBatch(events)
+	}
+}
+let perf_enabled = false
+let perf_render_ms = 0
+let perf_last_frame_completed_ms = 0
+let perf_sprite_slots_checked = 0
+let perf_sprite_enabled_checks = 0
+let perf_sprite_rows_decoded = 0
+let perf_sprite_pixels_tested = 0
+let perf_sprite_visible_pixels = 0
+let perf_sprite_opaque_pixels = 0
+let perf_sprite_attribute_refreshes = 0
+let perf_repeated_effective_lines = 0
+let perf_last_effective_y = -1
+let perf_last_output_y = -1
+
+const reset_sprite_perf_counters = (): void => {
+	perf_sprite_slots_checked = 0
+	perf_sprite_enabled_checks = 0
+	perf_sprite_rows_decoded = 0
+	perf_sprite_pixels_tested = 0
+	perf_sprite_visible_pixels = 0
+	perf_sprite_opaque_pixels = 0
+	perf_sprite_attribute_refreshes = 0
+	perf_repeated_effective_lines = 0
+	perf_last_effective_y = -1
+	perf_last_output_y = -1
+}
 const default_palette = new Uint16Array([
 0x000,0xfff,0x800,0xafe,0xc4c,0x0c5,0x00a,0xee7,0xd85,0x640,0xf77,0x333,0x777,0xaf6,0x08f,0xbbb,0x000,0x111,0x222,0x333,0x444,0x555,0x666,0x777,0x888,0x999,0xaaa,0xbbb,0xccc,0xddd,0xeee,0xfff,0x211,0x433,0x644,0x866,0xa88,0xc99,0xfbb,0x211,0x422,0x633,0x844,0xa55,0xc66,0xf77,0x200,0x411,0x611,0x822,0xa22,0xc33,0xf33,0x200,0x400,0x600,0x800,0xa00,0xc00,0xf00,0x221,0x443,0x664,0x886,0xaa8,0xcc9,0xfeb,0x211,0x432,0x653,0x874,0xa95,0xcb6,0xfd7,0x210,0x431,0x651,0x862,0xa82,0xca3,0xfc3,0x210,0x430,0x640,0x860,0xa80,0xc90,0xfb0,0x121,0x343,0x564,0x786,0x9a8,0xbc9,0xdfb,0x121,0x342,0x463,0x684,0x8a5,0x9c6,0xbf7,0x120,0x241,0x461,0x582,0x6a2,0x8c3,0x9f3,0x120,0x240,0x360,0x480,0x5a0,0x6c0,0x7f0,0x121,0x343,0x465,0x686,0x8a8,0x9ca,0xbfc,0x121,0x242,0x364,0x485,0x5a6,0x6c8,0x7f9,0x020,0x141,0x162,0x283,0x2a4,0x3c5,0x3f6,0x020,0x041,0x061,0x082,0x0a2,0x0c3,0x0f3,0x122,0x344,0x466,0x688,0x8aa,0x9cc,0xbff,0x122,0x244,0x366,0x488,0x5aa,0x6cc,0x7ff,0x022,0x144,0x166,0x288,0x2aa,0x3cc,0x3ff,0x022,0x044,0x066,0x088,0x0aa,0x0cc,0x0ff,0x112,0x334,0x456,0x668,0x88a,0x9ac,0xbcf,0x112,0x224,0x346,0x458,0x56a,0x68c,0x79f,0x002,0x114,0x126,0x238,0x24a,0x35c,0x36f,0x002,0x014,0x016,0x028,0x02a,0x03c,0x03f,0x112,0x334,0x546,0x768,0x98a,0xb9c,0xdbf,0x112,0x324,0x436,0x648,0x85a,0x96c,0xb7f,0x102,0x214,0x416,0x528,0x62a,0x83c,0x93f,0x102,0x204,0x306,0x408,0x50a,0x60c,0x70f,0x212,0x434,0x646,0x868,0xa8a,0xc9c,0xfbe,0x211,0x423,0x635,0x847,0xa59,0xc6b,0xf7d,0x201,0x413,0x615,0x826,0xa28,0xc3a,0xf3c,0x201,0x403,0x604,0x806,0xa08,0xc09,0xf0b
 ])
@@ -177,7 +355,13 @@ export const video_reset = (): void => {
 	ien = 0
 	isr = 0
 	irq_line = 0
-	psg_pending_writes.length = 0
+	audio_pending_writes.length = 0
+	framebuffer_in_flight_sequence = null
+	if (pending_framebuffer && framebuffer_pool.length < MAX_FRAMEBUFFER_SPARES) {
+		framebuffer_pool.push(pending_framebuffer.fb)
+	}
+	pending_framebuffer = null
+	perf_framebuffer_pool_misses = 0
 	// init Layer registers
 	reg_layer.forEach(arr => arr.fill(0))
 	prev_layer_properties_version[0].fill(0xFFFFFFFF)
@@ -226,8 +410,15 @@ export const video_reset = (): void => {
 	fx_affine_map_base = 0
 	fx_affine_map_size = 2
 	fx_affine_clip = false
-	// init sprite data
-	sprite_data.forEach(arr => arr.fill(0))
+	// The C implementation gets zero-initialized cached sprite structs for free.
+	// JavaScript objects do not, so refresh every cache entry after clearing the
+	// raw attributes. Otherwise an untouched slot below a high active index can
+	// fall through the inactive check with undefined geometry.
+	max_active_sprite_index = -1
+	for (let sprite = 0; sprite < NUM_SPRITES; sprite++) {
+		sprite_data[sprite].fill(0)
+		refresh_sprite_properties(sprite)
+	}
 	// copy palette
 	for (let i: number = 0; i < 256; i++) {
 		palette[i * 2 + 0] = default_palette[i] & 0xff
@@ -245,7 +436,6 @@ export const video_reset = (): void => {
 	vga_scan_pos_y = 0
 	ntsc_half_cnt = 0
 	ntsc_scan_pos_y = 0
-	max_active_sprite_index = -1
 	pcm_reset()
 	audio_last_cycle = s6502.cycleCount
 	audio_sample_frac = 0
@@ -432,6 +622,7 @@ interface video_sprite_properties {
 }
 const sprite_properties: video_sprite_properties[] = new Array(128).fill(null).map(() => ({} as video_sprite_properties))
 const refresh_sprite_properties = (sprite: number): void => {
+	if (perf_enabled) perf_sprite_attribute_refreshes++
 	const props: video_sprite_properties = sprite_properties[sprite]
 	props.sprite_zdepth = (sprite_data[sprite][6] >> 2) & 3
 	props.sprite_collision_mask = sprite_data[sprite][6] & 0xf0
@@ -531,18 +722,24 @@ const render_sprite_line = (y: number): void => {
 		return
 	}
 	let sprite_budget: number = 800 + 1
+	spriteLoop:
 	for (let i: number = 0; i <= max_active_sprite_index; i++) {
 		// one clock per lookup
-		sprite_budget--; if (sprite_budget == 0) break
+		if (perf_enabled) perf_sprite_slots_checked++
+		sprite_budget--; if (sprite_budget <= 0) break
 		const props: video_sprite_properties = sprite_properties[i]
-		if (props.sprite_zdepth == 0) {
+		// Treat a missing cached value as disabled as an additional guard against
+		// partially initialized or restored state.
+		if (!(props.sprite_zdepth > 0)) {
 			continue
 		}
+		if (perf_enabled) perf_sprite_enabled_checks++
 
 		// check whether this line falls within the sprite
 		if (y < props.sprite_y || y >= props.sprite_y + props.sprite_height) {
 			continue
 		}
+		if (perf_enabled) perf_sprite_rows_decoded++
 
 		const eff_sy: number = props.vflip ? ((props.sprite_height - 1) - (y - props.sprite_y)) : (y - props.sprite_y)
 		let eff_sx: number = (props.hflip ? (props.sprite_width - 1) : 0)
@@ -557,25 +754,34 @@ const render_sprite_line = (y: number): void => {
 			// 8bpp
 			for (let i = 0; i < width; i++) unpacked_sprite_line[i] = video_ram[bitmap_data + i]
 		}
+		if (perf_enabled) {
+			perf_sprite_pixels_tested += props.sprite_width
+			const firstVisibleSx = Math.max(0, -props.sprite_x)
+			const lastVisibleSx = Math.min(props.sprite_width, SCREEN_WIDTH - props.sprite_x)
+			perf_sprite_visible_pixels += Math.max(0, lastVisibleSx - firstVisibleSx)
+		}
 
 		for (let sx: number = 0; sx < props.sprite_width; ++sx) {
 			const line_x: number = props.sprite_x + sx
-			if (line_x >= SCREEN_WIDTH) {
+			// The original C renderer stored line_x as uint16_t, so negative
+			// coordinates wrapped and were rejected by this bounds check. Preserve
+			// that behavior explicitly for JavaScript numbers.
+			if (line_x < 0 || line_x >= SCREEN_WIDTH) {
 				eff_sx += eff_sx_incr
 				continue
 			}
-
 			// one clock per fetched 32 bits
 			if (!(sx & vram_fetch_mask)) {
-				sprite_budget--; if (sprite_budget == 0) break
+				sprite_budget--; if (sprite_budget <= 0) break spriteLoop
 			}
 
 			// one clock per rendered pixel
-			sprite_budget--; if (sprite_budget == 0) break
+			sprite_budget--; if (sprite_budget <= 0) break spriteLoop
 			let col_index: number = unpacked_sprite_line[eff_sx]
 			eff_sx += eff_sx_incr
 			// palette offset
 			if (col_index > 0) {
+				if (perf_enabled) perf_sprite_opaque_pixels++
 				sprite_line_collisions |= sprite_line_mask[line_x] & props.sprite_collision_mask
 				sprite_line_mask[line_x] |= props.sprite_collision_mask
 				if (props.sprite_zdepth > sprite_line_z[line_x]) {
@@ -975,6 +1181,11 @@ const render_line = (y: number, scan_pos_x: number): void => {
   // @ts-ignore
 	let eff_y: number = (eff_y_fp >> 16)
 	if (eff_y >= 480) eff_y = 480 - (y & 1)
+	if (perf_enabled && y !== perf_last_output_y) {
+		if (eff_y === perf_last_effective_y) perf_repeated_effective_lines++
+		perf_last_effective_y = eff_y
+		perf_last_output_y = y
+	}
 	layer_line_enable[0] = (dc_video & 0x10) ? 1 : 0
 	layer_line_enable[1] = (dc_video & 0x20) ? 1 : 0
 	sprite_line_enable = !!(dc_video & 0x40)
@@ -1162,6 +1373,61 @@ const update_isr_and_coll = (y: number, compare: number): void => {
 	}
 }
 
+const render_line_measured = (y: number, scan_pos_x: number): void => {
+	if (!perf_enabled) {
+		render_line(y, scan_pos_x)
+		return
+	}
+	const start = performance.now()
+	render_line(y, scan_pos_x)
+	perf_render_ms += performance.now() - start
+}
+
+export const video_set_perf_enabled = (enabled: boolean): void => {
+	perf_enabled = enabled
+	perf_render_ms = 0
+	perf_framebuffer_pool_misses = 0
+	perf_last_frame_completed_ms = 0
+	reset_sprite_perf_counters()
+}
+
+const take_render_stats = (completedAtMs = performance.now()): FrameRenderStats | undefined => {
+	if (!perf_enabled) return undefined
+	const frameIntervalMs = perf_last_frame_completed_ms > 0
+		? completedAtMs - perf_last_frame_completed_ms
+		: 0
+	perf_last_frame_completed_ms = completedAtMs
+	let activeSprites = 0
+	for (let sprite = 0; sprite <= max_active_sprite_index; sprite++) {
+		if (sprite_properties[sprite].sprite_zdepth > 0) activeSprites++
+	}
+	const stats = {
+		renderMs: perf_render_ms,
+		renderedFrames: 1,
+		coalescedFrames: 0,
+		framebufferPoolMisses: perf_framebuffer_pool_misses,
+		spriteSlotsChecked: perf_sprite_slots_checked,
+		spriteEnabledChecks: perf_sprite_enabled_checks,
+		spriteRowsDecoded: perf_sprite_rows_decoded,
+		spritePixelsTested: perf_sprite_pixels_tested,
+		spriteVisiblePixels: perf_sprite_visible_pixels,
+		spriteOpaquePixels: perf_sprite_opaque_pixels,
+		spriteAttributeRefreshes: perf_sprite_attribute_refreshes,
+		repeatedEffectiveLines: perf_repeated_effective_lines,
+		activeSprites,
+		maxActiveSpriteIndex: max_active_sprite_index,
+		workerTimedFrames: frameIntervalMs > 0 ? 1 : 0,
+		workerFrameElapsedMs: frameIntervalMs,
+		maxWorkerFrameIntervalMs: frameIntervalMs,
+		...takeWorkerPerfStats(),
+		completedAtEpochMs: performance.timeOrigin + completedAtMs,
+	}
+	perf_render_ms = 0
+	perf_framebuffer_pool_misses = 0
+	reset_sprite_perf_counters()
+	return stats
+}
+
 export const video_step = (mhz: number, steps: number, midline: boolean): boolean => {
 	let y: number = 0
   // @ts-ignore
@@ -1172,7 +1438,7 @@ export const video_step = (mhz: number, steps: number, midline: boolean): boolea
 		while (vga_scan_pos_x >= VGA_SCAN_WIDTH) {
 			vga_scan_pos_x -= VGA_SCAN_WIDTH
 			if (!ntsc_mode) {
-				render_line(vga_scan_pos_y - VGA_Y_OFFSET, VGA_SCAN_WIDTH)
+				render_line_measured(vga_scan_pos_y - VGA_Y_OFFSET, VGA_SCAN_WIDTH)
 			}
 			vga_scan_pos_y++
 			if (vga_scan_pos_y == SCAN_HEIGHT) {
@@ -1188,7 +1454,7 @@ export const video_step = (mhz: number, steps: number, midline: boolean): boolea
 		}
 	} else if (midline) {
 		if (!ntsc_mode) {
-			render_line(vga_scan_pos_y - VGA_Y_OFFSET, vga_scan_pos_x)
+			render_line_measured(vga_scan_pos_y - VGA_Y_OFFSET, vga_scan_pos_x)
 		}
 	}
 	ntsc_half_cnt += PIXEL_FREQ * steps / mhz
@@ -1199,12 +1465,12 @@ export const video_step = (mhz: number, steps: number, midline: boolean): boolea
 				if (ntsc_scan_pos_y < SCAN_HEIGHT) {
 					y = ntsc_scan_pos_y - NTSC_Y_OFFSET_LOW
 					if ((y & 1) == 0) {
-						render_line(y, NTSC_HALF_SCAN_WIDTH)
+						render_line_measured(y, NTSC_HALF_SCAN_WIDTH)
 					}
 				} else {
 					y = ntsc_scan_pos_y - NTSC_Y_OFFSET_HIGH
 					if ((y & 1) == 0) {
-						render_line(y | 1, NTSC_HALF_SCAN_WIDTH)
+						render_line_measured(y | 1, NTSC_HALF_SCAN_WIDTH)
 					}
 				}
 			}
@@ -1238,12 +1504,12 @@ export const video_step = (mhz: number, steps: number, midline: boolean): boolea
 			if (ntsc_scan_pos_y < SCAN_HEIGHT) {
 				y = ntsc_scan_pos_y - NTSC_Y_OFFSET_LOW
 				if ((y & 1) == 0) {
-					render_line(y, ntsc_half_cnt)
+					render_line_measured(y, ntsc_half_cnt)
 				}
 			} else {
 				y = ntsc_scan_pos_y - NTSC_Y_OFFSET_HIGH
 				if ((y & 1) == 0) {
-					render_line(y | 1, ntsc_half_cnt)
+					render_line_measured(y | 1, ntsc_half_cnt)
 				}
 			}
 		}
@@ -1330,7 +1596,9 @@ export const video_get_irq_out = (): boolean => {
 }
 
 
-export const video_update = (): boolean => {
+export const video_update = (deferPublication = false): boolean | (() => boolean) => {
+	const updateStart = perf_enabled ? performance.now() : 0
+	const sequence = nextVeraFrameSequence()
 
   // don't think this will be necessary
 	// for activity LED, overlay red 8x4 square into top right of framebuffer
@@ -1351,14 +1619,55 @@ export const video_update = (): boolean => {
 //		}
 //	}
 
-  // flush any batched PSG writes from this frame in a single IPC message
-  if (psg_pending_writes.length > 0) {
-    passVeraPsgBatch(psg_pending_writes.splice(0))
-  }
+  // Preserve audio register ordering while avoiding one worker/UI message per
+  // PCM byte. Large streams also flush at AUDIO_BATCH_MAX to bound latency.
+  flush_audio_writes()
+	if (perf_enabled) recordVideoUpdate(performance.now() - updateStart)
+	const frameCompletedAtMs = perf_enabled ? performance.now() : 0
+	const publishFrame = (): boolean => {
+		const renderStats = take_render_stats(frameCompletedAtMs)
 
-  // inform the renderer here that framebuffer is updated
-  passVeraFramebuffer(framebuffer, reg_composer[0])
-	return true
+    // VGA redraws the complete framebuffer each frame, so publish its backing
+    // store by ownership transfer and render the next frame directly into a
+    // recycled buffer. NTSC publishes one interlaced field at a time and must
+    // retain the other field locally, so it continues to use cloning.
+		const transferFramebuffer = (reg_composer[0] & 3) === 1
+		if (!transferFramebuffer) {
+			if (pending_framebuffer) {
+				if (framebuffer_pool.length < MAX_FRAMEBUFFER_SPARES) framebuffer_pool.push(pending_framebuffer.fb)
+				pending_framebuffer = null
+			}
+			passVeraFramebuffer(framebuffer, reg_composer[0], renderStats, false, sequence)
+		} else if (framebuffer_in_flight_sequence === null) {
+			send_transfer_framebuffer({
+				fb: framebuffer,
+				dcVideo: reg_composer[0],
+				sequence,
+				stats: renderStats,
+			})
+			use_next_framebuffer()
+		} else if (!pending_framebuffer) {
+			pending_framebuffer = {
+				fb: framebuffer,
+				dcVideo: reg_composer[0],
+				sequence,
+				stats: renderStats,
+			}
+			use_next_framebuffer()
+		} else {
+			const nextFramebuffer = pending_framebuffer.fb
+			pending_framebuffer = {
+				fb: framebuffer,
+				dcVideo: reg_composer[0],
+				sequence,
+				stats: merge_frame_stats(pending_framebuffer.stats, renderStats),
+			}
+			framebuffer = nextFramebuffer
+			framebuffer32 = new Uint32Array(framebuffer.buffer)
+		}
+		return true
+	}
+	return deferPublication ? publishFrame : publishFrame()
 }
 
 export const video_end = (): void => {
@@ -1505,19 +1814,21 @@ const video_space_read_range = (dest: Uint8Array, address: number, size: number)
 const write_psg = (address: number, value: number): void => {
 	const reg = address & 0x3f
 	audio_render()
-	psg_pending_writes.push({
+	audio_pending_writes.push({
 		cycle: s6502.cycleCount,
 		reg,
 		value,
 	})
+	if (audio_pending_writes.length >= AUDIO_BATCH_MAX) flush_audio_writes()
 }
 
 const write_pcm = (reg: VeraPcmWrite["reg"], value: number): void => {
-	passVeraPcmWrite({
+	audio_pending_writes.push({
 		cycle: s6502.cycleCount,
 		reg,
 		value,
 	})
+	if (audio_pending_writes.length >= AUDIO_BATCH_MAX) flush_audio_writes()
 }
 
 const fx_video_space_write = (address: number, nibble: boolean, value: number): void => {

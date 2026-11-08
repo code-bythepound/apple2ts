@@ -175,9 +175,75 @@ type VeraPcmWrite = {
   value: number,
 }
 
+type VeraAudioWrite = VeraPsgWrite | VeraPcmWrite
+
 type VeraFmWrite = {
   port: 0 | 1
   value: number
+}
+
+type VeraFrameStats = {
+  workerInstanceId: string
+  renderMs: number
+  renderedFrames: number
+  coalescedFrames: number
+  framebufferPoolMisses: number
+  spriteSlotsChecked: number
+  spriteEnabledChecks: number
+  spriteRowsDecoded: number
+  spritePixelsTested: number
+  spriteVisiblePixels: number
+  spriteOpaquePixels: number
+  spriteAttributeRefreshes: number
+  repeatedEffectiveLines: number
+  activeSprites: number
+  maxActiveSpriteIndex: number
+  workerTimedFrames: number
+  workerFrameElapsedMs: number
+  maxWorkerFrameIntervalMs: number
+  workerAdvanceCalls: number
+  workerAdvanceMs: number
+  maxWorkerAdvanceMs: number
+  veraSyncCalls: number
+  veraSyncMs: number
+  maxVeraSyncMs: number
+  veraVideoStepMs: number
+  maxVeraVideoStepMs: number
+  veraSpiStepMs: number
+  maxVeraSpiStepMs: number
+  veraFrameUpdateMs: number
+  maxVeraFrameUpdateMs: number
+  veraIrqMs: number
+  maxVeraIrqMs: number
+  veraScheduleMs: number
+  maxVeraScheduleMs: number
+  veraOtherMs: number
+  maxVeraOtherMs: number
+  veraAudioBatchCount: number
+  veraAudioBatchEvents: number
+  veraAudioBatchPrepareMs: number
+  maxVeraAudioBatchPrepareMs: number
+  veraAudioBatchPostCount: number
+  veraAudioBatchPostMs: number
+  maxVeraAudioBatchPostMs: number
+  videoUpdateMs: number
+  workerTimerCallbacks: number
+  workerTimerCallbackMs: number
+  maxWorkerTimerCallbackMs: number
+  workerWakeCount: number
+  workerTimerWakeCount: number
+  workerAudioWakeCount: number
+  workerWakeLatenessMs: number
+  maxWorkerWakeLatenessMs: number
+  machineStateBuildCount: number
+  machineStateBuildMs: number
+  machineStatePostCount: number
+  machineStatePostMs: number
+  machineStateEstimateMs: number
+  machineStateBytes: number
+  completedAtEpochMs: number
+  previousPostMs: number
+  sentAtEpochMs: number
 }
 
 interface PCodeFunc {

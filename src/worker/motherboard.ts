@@ -1,4 +1,5 @@
 import { FrameClock } from "./frameclock"
+import { isWorkerPerfEnabled, recordMachineStateBuild, recordWorkerAdvance, recordWorkerTimerCallback } from "./worker_perf"
 // Chris Torrence, 2022
 import { passMachineState, passSoftSwitchDescriptions, passWorkerOperationResult } from "./worker2main"
 import { s6502, setState6502, reset6502, setCycleCount, setPC, getStackString, get6502Instructions } from "./instructions"
@@ -986,16 +987,16 @@ export const getExternalMachineState = () => {
 }
 
 export const updateExternalMachineState = () => {
+  const buildStart = isWorkerPerfEnabled() ? performance.now() : 0
   const state = getExternalMachineState()
+  if (isWorkerPerfEnabled()) recordMachineStateBuild(performance.now() - buildStart)
   passMachineState(state)
-  // We need to pass this just once to the UI thread, so it can display
-  // the list of soft switches in the breakpoint dialog. Crossing my fingers
-  // that this will _always_ get called before someone displays the dialog.
+  // Soft-switch descriptions are separate from the frequently published state.
+  // Preserve their one-time delivery for debug dialogs.
   if (!didPassSoftSwitchDescriptions) {
     didPassSoftSwitchDescriptions = true
     passSoftSwitchDescriptions(getSoftSwitchDescriptions())
   }
-
 }
 
 
@@ -1106,9 +1107,16 @@ const doAdvance6502 = () => {
 
 
 let audioClockPort: MessagePort | null = null
-const advanceScheduledFrame = () => frameClock.advance(
-  performance.now(), refreshTime, doAdvance6502, () => performance.now(),
-)
+const advanceScheduledFrame = (source: "timer" | "audio") => {
+  const now = performance.now()
+  const wakeLatenessMs = frameClock.lateness(now)
+  const advanceStart = isWorkerPerfEnabled() ? now : 0
+  const advanced = frameClock.advance(now, refreshTime, doAdvance6502, () => performance.now())
+  if (advanced && isWorkerPerfEnabled()) {
+    recordWorkerAdvance(source, wakeLatenessMs, performance.now() - advanceStart)
+  }
+  return advanced
+}
 
 export const attachAudioClockPort = (port: MessagePort) => {
   audioClockPort?.close()
@@ -1117,7 +1125,7 @@ export const attachAudioClockPort = (port: MessagePort) => {
     // Audio wakes the worker if background timer throttling made it late.
     // The shared deadline prevents duplicate frames and catch-up bursts.
     try {
-      advanceScheduledFrame()
+      advanceScheduledFrame("audio")
     } finally {
       port.postMessage({ type: "ack" })
     }
@@ -1125,7 +1133,9 @@ export const attachAudioClockPort = (port: MessagePort) => {
 }
 
 const doAdvance6502Timer = () => {
-  advanceScheduledFrame()
+  const timerStart = isWorkerPerfEnabled() ? performance.now() : 0
+  advanceScheduledFrame("timer")
   const delay = cpuRunMode === RUN_MODE.PAUSED ? 20 : frameClock.delay(performance.now())
   setTimeout(doAdvance6502Timer, delay)
+  if (timerStart) recordWorkerTimerCallback(performance.now() - timerStart)
 }

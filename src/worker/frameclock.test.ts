@@ -48,3 +48,11 @@ test("overloaded frames do not add a full audio interval after CPU work", () => 
   }
   expect(frames).toBeGreaterThanOrEqual(47)
 })
+
+test("reports scheduler wake lateness without changing the deadline", () => {
+  const clock = new FrameClock()
+  clock.reset(100)
+  expect(clock.lateness(90)).toBe(0)
+  expect(clock.lateness(125)).toBe(25)
+  expect(clock.delay(90)).toBe(10)
+})

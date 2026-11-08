@@ -28,12 +28,21 @@ test.each([true, false])("audio initialization restores FM enabled=%s without op
     } })
     Object.defineProperty(globalThis, "fetch", { configurable: true, value: jest.fn(async () => ({})) })
     let play: (event: VeraPsgWrite) => Promise<void> = async () => {}
+    let playBatch: (events: VeraAudioWrite[]) => Promise<void> = async () => {}
     jest.isolateModules(() => {
-      play = jest.requireActual<typeof import("./vera_psg_audio")>("./vera_psg_audio").playVeraPsgWrite
+      const audio = jest.requireActual<typeof import("./vera_psg_audio")>("./vera_psg_audio")
+      play = audio.playVeraPsgWrite
+      playBatch = audio.playVeraAudioBatch
     })
     await play({ reg: 0, value: 42, cycle: 0 })
+    const mixedBatch: VeraAudioWrite[] = [
+      { reg: 1, value: 43, cycle: 1 },
+      { reg: "fifo", value: 44, cycle: 2 },
+    ]
+    await playBatch(mixedBatch)
     expect(postMessage).toHaveBeenCalledWith({ type: "fm-enabled", enabled })
     expect(postMessage).toHaveBeenCalledWith({ reg: 0, value: 42, cycle: 0 })
+    expect(postMessage).toHaveBeenCalledWith(mixedBatch)
   } finally {
     compile.mockRestore()
     for (const [key, descriptor] of originals) {

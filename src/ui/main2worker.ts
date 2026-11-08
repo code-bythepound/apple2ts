@@ -13,7 +13,7 @@ import { doSetUIDriveProps } from "./devices/disk/driveprops"
 import { setEnhancedMidi } from "./devices/audio/enhancedmidi"
 import { receiveMidiData } from "./devices/audio/midiinterface"
 import { playMockingboard } from "./devices/audio/mockingboard_audio"
-import { playVeraFmReset, playVeraFmWrite, playVeraPcmWrite, playVeraPsgWrite, playVeraPsgBatch } from "./devices/audio/vera_psg_audio"
+import { playVeraAudioBatch, playVeraFmReset, playVeraFmWrite, playVeraPcmWrite, playVeraPsgWrite, playVeraPsgBatch } from "./devices/audio/vera_psg_audio"
 import { emulatorSoundEnable, clickSpeaker } from "./devices/audio/speaker"
 import { doPlayDriveSound } from "./devices/disk/drivesounds"
 import { receiveCommData } from "./devices/serial/serialhub"
@@ -72,12 +72,19 @@ const resolveWorkerOperation = ({ operationId, error, value }: WorkerOperationRe
 }
 
 export const setMain2Worker = (workerIn: Worker) => {
+  if (worker && worker !== workerIn) worker.terminate()
   resetExecutionSequence = worker !== null && worker !== workerIn
   worker = workerIn
   doPostMessage(MSG_MAIN.VERA_FM_ENABLED, localStorage.getItem("veraFmAudioEnabled") !== "false")
   machineState.execution = undefined
   saveStateCallback = null
   saveStateLocalStorageCallback = null
+}
+
+export const clearMain2Worker = (workerIn: Worker) => {
+  if (worker !== workerIn) return
+  workerIn.terminate()
+  worker = null
 }
 
 export const setBootCallback = (callback: () => void) => {
@@ -93,9 +100,31 @@ export const setExecutionStateCallback = (callback: (execution: ExecutionSnapsho
   if (machineState.execution) callback(machineState.execution)
 }
 
-const doPostMessage = (msg: MSG_MAIN, payload: MessagePayload, operationId?: number) => {
+const doPostMessage = (msg: MSG_MAIN, payload: MessagePayload, operationId?: number,
+  transfer?: Transferable[]) => {
   if (!worker) return
-  worker.postMessage(operationId === undefined ? {msg, payload} : {msg, payload, operationId})
+  const message = operationId === undefined ? {msg, payload} : {msg, payload, operationId}
+  if (transfer) {
+    worker.postMessage(message, transfer)
+  } else {
+    worker.postMessage(message)
+  }
+}
+
+const acknowledgeVeraFramebuffer = (frame: VeraUiFrame, previousFrame: VeraUiFrame | null) => {
+  const sequence = frame.transferable
+    ? frame.sequence
+    : (previousFrame?.transferable ? previousFrame.sequence : null)
+  if (sequence === null) return
+  const returnedBuffer = previousFrame?.transferable ? previousFrame.fb?.buffer : undefined
+  if (returnedBuffer && returnedBuffer.byteLength > 0) {
+    doPostMessage(MSG_MAIN.VERA_FRAME_ACK, {
+      sequence,
+      returnedBuffer,
+    }, undefined, [returnedBuffer])
+  } else {
+    doPostMessage(MSG_MAIN.VERA_FRAME_ACK, sequence)
+  }
 }
 
 export const passSetRunMode = (runMode: RUN_MODE) => {
@@ -374,6 +403,12 @@ export const passSetVeraFmEnabled = (enabled: boolean) => {
   doPostMessage(MSG_MAIN.VERA_FM_ENABLED, enabled)
 }
 
+export const passSetVeraPerf = (enabled: boolean) => {
+  veraUiPerfEnabled = enabled
+  pendingMachineStateReactAt = null
+  doPostMessage(MSG_MAIN.VERA_PERF, enabled)
+}
+
 export const passSetVeraSlot = (slot: VERA_SLOT) => {
   doPostMessage(MSG_MAIN.VERA_SLOT, slot)
   // This will also come from the emulator, but set it here so the UI updates
@@ -518,9 +553,10 @@ let machineState: MachineState = {
 
 let didThrowConsoleWarning = false
 
-export const doOnMessage = (e: MessageEvent): {speed: number, helptext: string} | null => {
+export const doOnMessage = (e: MessageEvent): {speed: number, helptext: string, machineState?: boolean} | null => {
   switch (e.data.msg as MSG_WORKER) {
     case MSG_WORKER.MACHINE_STATE: {
+      const handlerStart = veraUiPerfEnabled ? performance.now() : 0
       const newState = e.data.payload as MachineState
       if (machineState.runMode !== newState.runMode) {
         emulatorSoundEnable(newState.runMode === RUN_MODE.RUNNING)
@@ -541,7 +577,11 @@ export const doOnMessage = (e: MessageEvent): {speed: number, helptext: string} 
         lastExecutionSequence = execution.executionSequence
         executionStateCallback?.(execution)
       }
-      return {speed: machineState.cpuSpeed, helptext: ""}
+      if (veraUiPerfEnabled) {
+        veraUiPerfTotals.machineStateMessages++
+        veraUiPerfTotals.machineStateHandlerMs += performance.now() - handlerStart
+      }
+      return {speed: machineState.cpuSpeed, helptext: "", machineState: true}
     }
     case MSG_WORKER.OPERATION_RESULT:
       resolveWorkerOperation(e.data.payload as WorkerOperationResult)
@@ -608,16 +648,41 @@ export const doOnMessage = (e: MessageEvent): {speed: number, helptext: string} 
     }
     case MSG_WORKER.VERA_PSG_BATCH: {
       const psgBatch = e.data.payload as VeraPsgWrite[]
+      veraUiPerfTotals.psgBatches++
+      veraUiPerfTotals.psgWrites += psgBatch.length
       playVeraPsgBatch(psgBatch)
       break
     }
     case MSG_WORKER.VERA_PCM_WRITE: {
       const pcmWrite = e.data.payload as VeraPcmWrite
+      veraUiPerfTotals.pcmMessages++
+      if (pcmWrite.reg === "fifo") veraUiPerfTotals.pcmFifoBytes++
       playVeraPcmWrite(pcmWrite)
       break
     }
+    case MSG_WORKER.VERA_AUDIO_BATCH: {
+      const events = e.data.payload as VeraAudioWrite[]
+      let hasPsg = false
+      let hasPcm = false
+      for (const event of events) {
+        if (typeof event.reg === "number") {
+          hasPsg = true
+          veraUiPerfTotals.psgWrites++
+        } else {
+          hasPcm = true
+          if (event.reg === "fifo") veraUiPerfTotals.pcmFifoBytes++
+        }
+      }
+      if (hasPsg) veraUiPerfTotals.psgBatches++
+      if (hasPcm) veraUiPerfTotals.pcmMessages++
+      playVeraAudioBatch(events)
+      break
+    }
     case MSG_WORKER.VERA_FM_WRITE: {
-      playVeraFmWrite(e.data.payload as VeraFmWrite[])
+      const fmWrites = e.data.payload as VeraFmWrite[]
+      veraUiPerfTotals.fmBatches++
+      veraUiPerfTotals.fmWrites += fmWrites.length
+      playVeraFmWrite(fmWrites)
       break
     }
     case MSG_WORKER.VERA_FM_RESET: {
@@ -678,7 +743,125 @@ export const doOnMessage = (e: MessageEvent): {speed: number, helptext: string} 
       break
     }
     case MSG_WORKER.VERA_FRAME: {
-      latestVeraFrame = e.data.payload as VeraUiFrame
+      const frame = e.data.payload as VeraUiFrame
+      const now = performance.now()
+      if (lastVeraFrameArrival > 0) {
+        const gap = now - lastVeraFrameArrival
+        veraUiPerfTotals.maxFrameGapMs = Math.max(veraUiPerfTotals.maxFrameGapMs, gap)
+        if (gap > 20) veraUiPerfTotals.lateFrameGaps++
+      }
+      lastVeraFrameArrival = now
+      veraUiPerfTotals.framesReceived++
+      veraUiPerfTotals.framebufferBytes += frame.fb?.byteLength ?? 0
+      if (frame.stats) {
+        veraUiPerfTotals.statsFrames += frame.stats.renderedFrames ?? 1
+        veraUiPerfTotals.postedStatsFrames++
+        veraUiPerfTotals.workerRenderMs += frame.stats.renderMs
+        veraUiPerfTotals.workerPostMs += frame.stats.previousPostMs
+        veraUiPerfTotals.coalescedFrames += frame.stats.coalescedFrames ?? 0
+        veraUiPerfTotals.framebufferPoolMisses += frame.stats.framebufferPoolMisses ?? 0
+        veraUiPerfTotals.spriteSlotsChecked += frame.stats.spriteSlotsChecked ?? 0
+        veraUiPerfTotals.spriteEnabledChecks += frame.stats.spriteEnabledChecks ?? 0
+        veraUiPerfTotals.spriteRowsDecoded += frame.stats.spriteRowsDecoded ?? 0
+        veraUiPerfTotals.spritePixelsTested += frame.stats.spritePixelsTested ?? 0
+        veraUiPerfTotals.spriteVisiblePixels += frame.stats.spriteVisiblePixels ?? 0
+        veraUiPerfTotals.spriteOpaquePixels += frame.stats.spriteOpaquePixels ?? 0
+        veraUiPerfTotals.spriteAttributeRefreshes += frame.stats.spriteAttributeRefreshes ?? 0
+        veraUiPerfTotals.repeatedEffectiveLines += frame.stats.repeatedEffectiveLines ?? 0
+        veraUiPerfTotals.activeSprites += frame.stats.activeSprites ?? 0
+        veraUiPerfTotals.maxActiveSpriteIndex = Math.max(
+          veraUiPerfTotals.maxActiveSpriteIndex,
+          frame.stats.maxActiveSpriteIndex ?? -1,
+        )
+        veraUiPerfTotals.workerTimedFrames += frame.stats.workerTimedFrames ?? 0
+        veraUiPerfTotals.workerFrameElapsedMs += frame.stats.workerFrameElapsedMs ?? 0
+        veraUiPerfTotals.maxWorkerFrameIntervalMs = Math.max(
+          veraUiPerfTotals.maxWorkerFrameIntervalMs,
+          frame.stats.maxWorkerFrameIntervalMs ?? 0,
+        )
+        veraUiPerfTotals.workerAdvanceCalls += frame.stats.workerAdvanceCalls ?? 0
+        veraUiPerfTotals.workerAdvanceMs += frame.stats.workerAdvanceMs ?? 0
+        veraUiPerfTotals.maxWorkerAdvanceMs = Math.max(veraUiPerfTotals.maxWorkerAdvanceMs, frame.stats.maxWorkerAdvanceMs ?? 0)
+        veraUiPerfTotals.veraSyncCalls += frame.stats.veraSyncCalls ?? 0
+        veraUiPerfTotals.veraSyncMs += frame.stats.veraSyncMs ?? 0
+        veraUiPerfTotals.maxVeraSyncMs = Math.max(veraUiPerfTotals.maxVeraSyncMs, frame.stats.maxVeraSyncMs ?? 0)
+        veraUiPerfTotals.veraVideoStepMs += frame.stats.veraVideoStepMs ?? 0
+        veraUiPerfTotals.maxVeraVideoStepMs = Math.max(
+          veraUiPerfTotals.maxVeraVideoStepMs,
+          frame.stats.maxVeraVideoStepMs ?? 0,
+        )
+        veraUiPerfTotals.veraSpiStepMs += frame.stats.veraSpiStepMs ?? 0
+        veraUiPerfTotals.maxVeraSpiStepMs = Math.max(
+          veraUiPerfTotals.maxVeraSpiStepMs,
+          frame.stats.maxVeraSpiStepMs ?? 0,
+        )
+        veraUiPerfTotals.veraFrameUpdateMs += frame.stats.veraFrameUpdateMs ?? 0
+        veraUiPerfTotals.maxVeraFrameUpdateMs = Math.max(
+          veraUiPerfTotals.maxVeraFrameUpdateMs,
+          frame.stats.maxVeraFrameUpdateMs ?? 0,
+        )
+        veraUiPerfTotals.veraIrqMs += frame.stats.veraIrqMs ?? 0
+        veraUiPerfTotals.maxVeraIrqMs = Math.max(
+          veraUiPerfTotals.maxVeraIrqMs,
+          frame.stats.maxVeraIrqMs ?? 0,
+        )
+        veraUiPerfTotals.veraScheduleMs += frame.stats.veraScheduleMs ?? 0
+        veraUiPerfTotals.maxVeraScheduleMs = Math.max(
+          veraUiPerfTotals.maxVeraScheduleMs,
+          frame.stats.maxVeraScheduleMs ?? 0,
+        )
+        veraUiPerfTotals.veraOtherMs += frame.stats.veraOtherMs ?? 0
+        veraUiPerfTotals.maxVeraOtherMs = Math.max(
+          veraUiPerfTotals.maxVeraOtherMs,
+          frame.stats.maxVeraOtherMs ?? 0,
+        )
+        veraUiPerfTotals.veraAudioBatchCount += frame.stats.veraAudioBatchCount ?? 0
+        veraUiPerfTotals.veraAudioBatchEvents += frame.stats.veraAudioBatchEvents ?? 0
+        veraUiPerfTotals.veraAudioBatchPrepareMs += frame.stats.veraAudioBatchPrepareMs ?? 0
+        veraUiPerfTotals.maxVeraAudioBatchPrepareMs = Math.max(
+          veraUiPerfTotals.maxVeraAudioBatchPrepareMs,
+          frame.stats.maxVeraAudioBatchPrepareMs ?? 0,
+        )
+        veraUiPerfTotals.veraAudioBatchPostCount += frame.stats.veraAudioBatchPostCount ?? 0
+        veraUiPerfTotals.veraAudioBatchPostMs += frame.stats.veraAudioBatchPostMs ?? 0
+        veraUiPerfTotals.maxVeraAudioBatchPostMs = Math.max(
+          veraUiPerfTotals.maxVeraAudioBatchPostMs,
+          frame.stats.maxVeraAudioBatchPostMs ?? 0,
+        )
+        veraUiPerfTotals.videoUpdateMs += frame.stats.videoUpdateMs ?? 0
+        veraUiPerfTotals.workerTimerCallbacks += frame.stats.workerTimerCallbacks ?? 0
+        veraUiPerfTotals.workerTimerCallbackMs += frame.stats.workerTimerCallbackMs ?? 0
+        veraUiPerfTotals.maxWorkerTimerCallbackMs = Math.max(
+          veraUiPerfTotals.maxWorkerTimerCallbackMs,
+          frame.stats.maxWorkerTimerCallbackMs ?? 0,
+        )
+        veraUiPerfTotals.workerWakeCount += frame.stats.workerWakeCount ?? 0
+        veraUiPerfTotals.workerTimerWakeCount += frame.stats.workerTimerWakeCount ?? 0
+        veraUiPerfTotals.workerAudioWakeCount += frame.stats.workerAudioWakeCount ?? 0
+        veraUiPerfTotals.workerWakeLatenessMs += frame.stats.workerWakeLatenessMs ?? 0
+        veraUiPerfTotals.maxWorkerWakeLatenessMs = Math.max(
+          veraUiPerfTotals.maxWorkerWakeLatenessMs,
+          frame.stats.maxWorkerWakeLatenessMs ?? 0,
+        )
+        veraUiPerfTotals.machineStateBuildCount += frame.stats.machineStateBuildCount ?? 0
+        veraUiPerfTotals.machineStateBuildMs += frame.stats.machineStateBuildMs ?? 0
+        veraUiPerfTotals.machineStatePostCount += frame.stats.machineStatePostCount ?? 0
+        veraUiPerfTotals.machineStatePostMs += frame.stats.machineStatePostMs ?? 0
+        veraUiPerfTotals.machineStateEstimateMs += frame.stats.machineStateEstimateMs ?? 0
+        veraUiPerfTotals.machineStateBytes += frame.stats.machineStateBytes ?? 0
+        veraUiPerfTotals.completionToSendMs += Math.max(
+          0,
+          frame.stats.sentAtEpochMs - frame.stats.completedAtEpochMs,
+        )
+        veraUiPerfTotals.deliveryLatencyMs += Math.max(
+          0,
+          performance.timeOrigin + now - frame.stats.sentAtEpochMs,
+        )
+      }
+      const previousFrame = latestVeraFrame
+      latestVeraFrame = frame
+      acknowledgeVeraFramebuffer(frame, previousFrame)
+      veraFrameProfiler?.(frame, now)
       break
     }
     case MSG_WORKER.ERRORMSG: {
@@ -707,13 +890,244 @@ export type VeraUiFrame = {
   fb?: Uint8ClampedArray<ArrayBuffer>,
   dcVideo: number,
   sequence: number,
+  stats?: VeraFrameStats,
+  transferable?: boolean,
 }
 
 let latestVeraFrame: VeraUiFrame | null = null
+let lastVeraFrameArrival = 0
+let veraFrameProfiler: ((frame: VeraUiFrame, receivedAt: number) => void) | null = null
+
+export type VeraUiPerfTotals = {
+  framesReceived: number,
+  framebufferBytes: number,
+  statsFrames: number,
+  postedStatsFrames: number,
+  workerRenderMs: number,
+  workerPostMs: number,
+  deliveryLatencyMs: number,
+  coalescedFrames: number,
+  framebufferPoolMisses: number,
+  spriteSlotsChecked: number,
+  spriteEnabledChecks: number,
+  spriteRowsDecoded: number,
+  spritePixelsTested: number,
+  spriteVisiblePixels: number,
+  spriteOpaquePixels: number,
+  spriteAttributeRefreshes: number,
+  repeatedEffectiveLines: number,
+  activeSprites: number,
+  maxActiveSpriteIndex: number,
+  workerTimedFrames: number,
+  workerFrameElapsedMs: number,
+  maxWorkerFrameIntervalMs: number,
+  workerAdvanceCalls: number,
+  workerAdvanceMs: number,
+  maxWorkerAdvanceMs: number,
+  veraSyncCalls: number,
+  veraSyncMs: number,
+  maxVeraSyncMs: number,
+  veraVideoStepMs: number,
+  maxVeraVideoStepMs: number,
+  veraSpiStepMs: number,
+  maxVeraSpiStepMs: number,
+  veraFrameUpdateMs: number,
+  maxVeraFrameUpdateMs: number,
+  veraIrqMs: number,
+  maxVeraIrqMs: number,
+  veraScheduleMs: number,
+  maxVeraScheduleMs: number,
+  veraOtherMs: number,
+  maxVeraOtherMs: number,
+  veraAudioBatchCount: number,
+  veraAudioBatchEvents: number,
+  veraAudioBatchPrepareMs: number,
+  maxVeraAudioBatchPrepareMs: number,
+  veraAudioBatchPostCount: number,
+  veraAudioBatchPostMs: number,
+  maxVeraAudioBatchPostMs: number,
+  videoUpdateMs: number,
+  workerTimerCallbacks: number,
+  workerTimerCallbackMs: number,
+  maxWorkerTimerCallbackMs: number,
+  workerWakeCount: number,
+  workerTimerWakeCount: number,
+  workerAudioWakeCount: number,
+  workerWakeLatenessMs: number,
+  maxWorkerWakeLatenessMs: number,
+  machineStateBuildCount: number,
+  machineStateBuildMs: number,
+  machineStatePostCount: number,
+  machineStatePostMs: number,
+  machineStateEstimateMs: number,
+  machineStateBytes: number,
+  machineStateMessages: number,
+  machineStateHandlerMs: number,
+  machineStateReactCommits: number,
+  machineStateReactCommitMs: number,
+  appleDisplayFrames: number,
+  appleDisplayMs: number,
+  maxAppleDisplayMs: number,
+  appleRafCallbacks: number,
+  appleRafCallbackMs: number,
+  maxAppleRafCallbackMs: number,
+  veraRafCallbacks: number,
+  veraRafCallbackMs: number,
+  maxVeraRafCallbackMs: number,
+  completionToSendMs: number,
+  lateFrameGaps: number,
+  maxFrameGapMs: number,
+  psgBatches: number,
+  psgWrites: number,
+  pcmMessages: number,
+  pcmFifoBytes: number,
+  fmBatches: number,
+  fmWrites: number,
+}
+
+const emptyVeraUiPerfTotals = (): VeraUiPerfTotals => ({
+  framesReceived: 0,
+  framebufferBytes: 0,
+  statsFrames: 0,
+  postedStatsFrames: 0,
+  workerRenderMs: 0,
+  workerPostMs: 0,
+  deliveryLatencyMs: 0,
+  coalescedFrames: 0,
+  framebufferPoolMisses: 0,
+  spriteSlotsChecked: 0,
+  spriteEnabledChecks: 0,
+  spriteRowsDecoded: 0,
+  spritePixelsTested: 0,
+  spriteVisiblePixels: 0,
+  spriteOpaquePixels: 0,
+  spriteAttributeRefreshes: 0,
+  repeatedEffectiveLines: 0,
+  activeSprites: 0,
+  maxActiveSpriteIndex: -1,
+  workerTimedFrames: 0,
+  workerFrameElapsedMs: 0,
+  maxWorkerFrameIntervalMs: 0,
+  workerAdvanceCalls: 0,
+  workerAdvanceMs: 0,
+  maxWorkerAdvanceMs: 0,
+  veraSyncCalls: 0,
+  veraSyncMs: 0,
+  maxVeraSyncMs: 0,
+  veraVideoStepMs: 0,
+  maxVeraVideoStepMs: 0,
+  veraSpiStepMs: 0,
+  maxVeraSpiStepMs: 0,
+  veraFrameUpdateMs: 0,
+  maxVeraFrameUpdateMs: 0,
+  veraIrqMs: 0,
+  maxVeraIrqMs: 0,
+  veraScheduleMs: 0,
+  maxVeraScheduleMs: 0,
+  veraOtherMs: 0,
+  maxVeraOtherMs: 0,
+  veraAudioBatchCount: 0,
+  veraAudioBatchEvents: 0,
+  veraAudioBatchPrepareMs: 0,
+  maxVeraAudioBatchPrepareMs: 0,
+  veraAudioBatchPostCount: 0,
+  veraAudioBatchPostMs: 0,
+  maxVeraAudioBatchPostMs: 0,
+  videoUpdateMs: 0,
+  workerTimerCallbacks: 0,
+  workerTimerCallbackMs: 0,
+  maxWorkerTimerCallbackMs: 0,
+  workerWakeCount: 0,
+  workerTimerWakeCount: 0,
+  workerAudioWakeCount: 0,
+  workerWakeLatenessMs: 0,
+  maxWorkerWakeLatenessMs: 0,
+  machineStateBuildCount: 0,
+  machineStateBuildMs: 0,
+  machineStatePostCount: 0,
+  machineStatePostMs: 0,
+  machineStateEstimateMs: 0,
+  machineStateBytes: 0,
+  machineStateMessages: 0,
+  machineStateHandlerMs: 0,
+  machineStateReactCommits: 0,
+  machineStateReactCommitMs: 0,
+  appleDisplayFrames: 0,
+  appleDisplayMs: 0,
+  maxAppleDisplayMs: 0,
+  appleRafCallbacks: 0,
+  appleRafCallbackMs: 0,
+  maxAppleRafCallbackMs: 0,
+  veraRafCallbacks: 0,
+  veraRafCallbackMs: 0,
+  maxVeraRafCallbackMs: 0,
+  completionToSendMs: 0,
+  lateFrameGaps: 0,
+  maxFrameGapMs: 0,
+  psgBatches: 0,
+  psgWrites: 0,
+  pcmMessages: 0,
+  pcmFifoBytes: 0,
+  fmBatches: 0,
+  fmWrites: 0,
+})
+
+let veraUiPerfTotals = emptyVeraUiPerfTotals()
+let veraUiPerfEnabled = false
+let pendingMachineStateReactAt: number | null = null
+
+export const isVeraUiPerfEnabled = () => veraUiPerfEnabled
+
+export const recordAppleDisplayPerf = (elapsedMs: number) => {
+  if (!veraUiPerfEnabled) return
+  veraUiPerfTotals.appleDisplayFrames++
+  veraUiPerfTotals.appleDisplayMs += elapsedMs
+  veraUiPerfTotals.maxAppleDisplayMs = Math.max(veraUiPerfTotals.maxAppleDisplayMs, elapsedMs)
+}
+
+export const recordAppleRafCallbackPerf = (elapsedMs: number) => {
+  if (!veraUiPerfEnabled) return
+  veraUiPerfTotals.appleRafCallbacks++
+  veraUiPerfTotals.appleRafCallbackMs += elapsedMs
+  veraUiPerfTotals.maxAppleRafCallbackMs = Math.max(veraUiPerfTotals.maxAppleRafCallbackMs, elapsedMs)
+}
+
+export const recordVeraRafCallbackPerf = (elapsedMs: number) => {
+  if (!veraUiPerfEnabled) return
+  veraUiPerfTotals.veraRafCallbacks++
+  veraUiPerfTotals.veraRafCallbackMs += elapsedMs
+  veraUiPerfTotals.maxVeraRafCallbackMs = Math.max(veraUiPerfTotals.maxVeraRafCallbackMs, elapsedMs)
+}
+
+export const markMachineStateReactUpdate = () => {
+  if (!veraUiPerfEnabled || pendingMachineStateReactAt !== null) return
+  pendingMachineStateReactAt = performance.now()
+}
+
+export const recordMachineStateReactCommit = () => {
+  if (!veraUiPerfEnabled || pendingMachineStateReactAt === null) return
+  veraUiPerfTotals.machineStateReactCommits++
+  veraUiPerfTotals.machineStateReactCommitMs += performance.now() - pendingMachineStateReactAt
+  pendingMachineStateReactAt = null
+}
+
+export const handleTakeVeraUiPerfTotals = () => {
+  const totals = veraUiPerfTotals
+  veraUiPerfTotals = emptyVeraUiPerfTotals()
+  return totals
+}
+
+export const setVeraFrameProfiler = (
+  profiler: ((frame: VeraUiFrame, receivedAt: number) => void) | null,
+) => {
+  veraFrameProfiler = profiler
+}
 
 export const handleGetVeraFrame = () => {
   return latestVeraFrame
 }
+
+export const handleGetCpuSpeed = () => machineState.cpuSpeed
 
 export const handleGetShowAppleMouse = () => {
   const isFullscreen = document.fullscreenElement !== null
